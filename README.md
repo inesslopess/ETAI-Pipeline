@@ -1,14 +1,23 @@
 # Baseline Predictive Pipeline -- ETAI
+## 20231699 Inês Lopes
 
-This is the **starting point** for your semester project: a small but *complete* predictive pipeline -- every piece a real project needs (entry point, config, data loading, preprocessing, model, evaluation), just kept as simple as possible for now.
+Week 2:
 
-The task: predict two-year recidivism using ProPublica's COMPAS
-dataset -- the data behind a real 2016 investigation into a risk-
-assessment algorithm actually used by US courts to help inform bail and sentencing decisions. See `data/README.md` for the full problem description and a complete data dictionary before you start.
+(DT) Decision Tree:
+    Train accuracy: 0.829
+    Test accuracy:  0.628
 
-It has some **deliberately weak spots**. Part of your work this
-semester is finding them and making them better -- see the pipeline progress table below, which tracks what changes and why as the weeks
-go on.
+The Decision Tree has a high training accuracy of 82.9%, but its test accuracy drops to 62.8%. This large difference suggests that the model is overfitting the training data and does not generalize as well to unseen data.
+
+(LR) Logistic Regression:
+    Train accuracy: 0.679
+    Test accuracy:  0.679
+
+Logistic Regression has the same training and test accuracy of 67.9%. This suggests that the model generalizes more consistently and shows little evidence of overfitting.
+
+So overall, LR performs better on unseen data and is more stable, while DT performs better on the training data but suffers from overfitting.
+
+
 
 ## Project structure
 

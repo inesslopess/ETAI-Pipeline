@@ -7,7 +7,7 @@ Week 2:
     Train accuracy: 0.829
     Test accuracy:  0.628
 
-The Decision Tree has a high training accuracy of 82.9%, but its test accuracy drops to 62.8%. This large difference suggests that the model is overfitting the training data and does not generalize as well to unseen data.
+The Decision Tree has a high training accuracy of 82.9%, but its test accuracy drops to 62.8%. This large difference suggests that the model is overfitting the training data and does not generalize as well to unseen data!
 
 (LR) Logistic Regression:
     Train accuracy: 0.679

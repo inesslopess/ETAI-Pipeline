@@ -18,6 +18,14 @@ Logistic Regression has the same training and test accuracy of 67.9%. This sugge
 So overall, LR performs better on unseen data and is more stable, while DT performs better on the training data but suffers from overfitting.
 
 
+Week 3:
+
+First try:
+    predictive accuracy decreased slightly
+    class-1 recall decreased noticeably
+    data cleanliness increase strongly
+    race/FPR analysis became much clearer
+    FPR decreased for the two largest racial groups
 
 ## Project structure
 

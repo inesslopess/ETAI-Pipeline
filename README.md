@@ -20,12 +20,16 @@ So overall, LR performs better on unseen data and is more stable, while DT perfo
 
 Week 3:
 
-First try:
-    predictive accuracy decreased slightly
-    class-1 recall decreased noticeably
-    data cleanliness increase strongly
-    race/FPR analysis became much clearer
-    FPR decreased for the two largest racial groups
+After preprocessing, overall test accuracy decreased slightly for both models. The Decision Tree decreased from 62.8% to 61.1%, while Logistic Regression decreased from 67.9% to 65.7%. The Decision Tree still shows substantial overfitting, although its train–test gap decreased from 20.1 to 18.0 percentage points. The most important change appears in class-1 recall: Decision Tree recall decreased from 0.49 to 0.45, while Logistic Regression recall decreased more noticeably from 0.61 to 0.48. This means both models became worse at identifying actual class-1 cases after preprocessing. The class-1 F1-score also decreased for both models. On the other hand, Logistic Regression improved its recall for class 0 from 0.74 to 0.80. Preprocessing also standardized inconsistent race labels, making the false-positive-rate fairness analysis much more reliable.
+
+# Week 4
+We compared four classifiers using stratified 5-fold cross-validation on the development set. Logistic Regression achieved the highest mean validation accuracy (0.673) and had a very small train-validation gap (+0.003), indicating stable generalization with little evidence of overfitting. Random Forest reached a lower validation accuracy (0.637) and showed a much larger gap (+0.097), suggesting overfitting. The Decision Tree performed worse, with a validation accuracy of 0.604 and a similarly large gap (+0.096). The Dummy classifier achieved 0.549 accuracy and serves as the baseline, showing that the real models learn useful patterns beyond simply predicting the majority class. Overall, Logistic Regression provided the strongest and most stable cross-validation performance among the tested models.
+
+| Model               | Train mean | Validation mean | Gap  (gap = train perf - valid perf)
+| Logistic Regression | 0.676      | 0.673           | +0.003 |
+| Random Forest       | 0.734      | 0.637           | +0.097 |  (overfitting)
+| Decision Tree       | 0.699      | 0.604           | +0.096 |
+| Dummy               | 0.549      | 0.549           | 0.000  |
 
 ## Project structure
 
@@ -52,7 +56,9 @@ This table is updated after each practical class, so you can always see what cha
 
 | Week | Practical class focus | Added to the pipeline |
 |------|------------------------|------------------------|
-| 2 | Introduction & baseline pipeline | Initial version: project structure, a single naive train/test split (no cross-validation), minimal preprocessing (drop rows with missing values, one-hot encode categoricals), logistic regression baseline, a first (deliberately simple) fairness check comparing our model's and COMPAS's own false-positive rate by race, train-vs-test accuracy reporting (to start spotting overfitting), and each run's full report saved automatically to `results/` |
+| 2 | Introduction & baseline pipeline | Initial project structure, single train/test split, simple preprocessing, Logistic Regression and Decision Tree baselines, classification metrics, fairness check and automatic result saving. |
+| 3 | Data cleaning & preprocessing | Diagnosis-driven cleaning, placeholder and invalid-value handling, category normalization, missing-value indicators, imputation, encoding and scaling inside a leak-safe preprocessing pipeline. |
+| 4 | Cross-validation & model comparison | Replaced the ordinary train/test evaluation with a locked 20% final test set and stratified 5-fold cross-validation on the 80% development set. Added out-of-fold predictions, fold-by-fold train/validation scores, mean ± standard deviation, train-validation gap, Dummy baseline and Random Forest. The final model is refitted on the full development set after cross-validation. |
 
 ## Environment setup
 

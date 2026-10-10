@@ -30,7 +30,7 @@ from src.preprocessing import (
     build_preprocessor,
     split_dev_test,
 )
-from src.model import build_model
+from src.model import build_pipeline
 from src.evaluate import (
     cross_validate_pipeline,
     cv_report,
@@ -38,6 +38,12 @@ from src.evaluate import (
     fairness_report,
 )
 from src.results import save_run
+from src.tuning import (
+    tune_pipeline,
+    nested_cross_validate,
+    tuning_report,
+)
+
 
 
 def load_config(path: str = "config.yaml") -> dict:
@@ -126,17 +132,12 @@ def main():
     # - scaling
     #
     # using only that fold's training data.
-    pipeline = Pipeline([
-        (
-            "prep",
-            build_preprocessor(config["preprocessing"]),
-        ),
-        (
-            "model",
-            build_model(config["model"]),
-        ),
-    ])
-
+    
+    pipeline = build_pipeline(
+        config["preprocessing"],
+        config["model"],
+    )
+    
     # ---------------------------------------------------------
     # 7. DEFINE STRATIFIED CROSS-VALIDATION
     # ---------------------------------------------------------
@@ -178,6 +179,87 @@ def main():
         sensitive_attr=config["data"]["sensitive_attr"],
     )
 
+    
+    # ---------------------------------------------------------
+    # WEEK 5: HYPERPARAMETER TUNING
+    # ---------------------------------------------------------
+
+    tuning_config = config.get("tuning", {})
+
+    if tuning_config.get("enabled", False):
+
+        model_type = config["model"]["type"]
+        search_spaces = tuning_config.get("search_spaces") or {}
+
+        if model_type not in search_spaces:
+            raise ValueError(
+                f"No tuning search space defined for {model_type}"
+            )
+
+        search_space = search_spaces[model_type]
+
+        n_trials = tuning_config["n_trials"]
+        tuning_seed = tuning_config["random_state"]
+        scoring = config["cv"]["scoring"]
+        n_jobs = config["cv"]["n_jobs"]
+
+        inner_cv = StratifiedKFold(
+            n_splits=tuning_config["n_splits"],
+            shuffle=True,
+            random_state=tuning_seed,
+        )
+
+        # 1. Evaluate the tuning procedure honestly
+        nested_scores, y_oof = nested_cross_validate(
+            pipeline,
+            X_dev,
+            y_dev,
+            cv,
+            inner_cv,
+            scoring,
+            search_space,
+            n_trials,
+            tuning_seed,
+            n_jobs=n_jobs,
+        )
+
+        report += "\n\nTUNED MODEL: NESTED CROSS-VALIDATION\n"
+        report += cv_report(nested_scores, scoring=scoring)
+
+        # 2. Find the best hyperparameters on all development data
+        pipeline, study = tune_pipeline(
+            pipeline,
+            X_dev,
+            y_dev,
+            inner_cv,
+            scoring,
+            search_space,
+            n_trials,
+            tuning_seed,
+            n_jobs=n_jobs,
+        )
+
+        # 3. Save the tuning results
+        report += "\n\n" + tuning_report(
+            study,
+            nested_scores,
+            scoring=scoring,
+        )
+
+        
+        # 4. Evaluate the tuned model using nested CV predictions
+        report += "\n\nTUNED MODEL: CLASSIFICATION REPORT\n"
+        report += oof_classification_report(y_dev, y_oof)
+
+        report += "\n\nTUNED MODEL: FAIRNESS REPORT\n"
+        report += fairness_report(
+            y_dev,
+            y_oof,
+            extras_dev,
+            sensitive_attr=config["data"]["sensitive_attr"],
+        )
+
+
     # ---------------------------------------------------------
     # 10. REFIT FINAL MODEL ON ALL DEVELOPMENT DATA
     # ---------------------------------------------------------
@@ -187,16 +269,7 @@ def main():
     #
     # IMPORTANT:
     # X_test / y_test are still NOT scored here.
-    final_pipeline = Pipeline([
-        (
-            "prep",
-            build_preprocessor(config["preprocessing"]),
-        ),
-        (
-            "model",
-            build_model(config["model"]),
-        ),
-    ])
+    final_pipeline = pipeline
 
     final_pipeline.fit(
         X_dev,

@@ -1,7 +1,7 @@
 # Baseline Predictive Pipeline -- ETAI
 ## 20231699 Inês Lopes
 
-Week 2:
+# Week 2:
 
 (DT) Decision Tree:
     Train accuracy: 0.829
@@ -18,7 +18,7 @@ Logistic Regression has the same training and test accuracy of 67.9%. This sugge
 So overall, LR performs better on unseen data and is more stable, while DT performs better on the training data but suffers from overfitting.
 
 
-Week 3:
+# Week 3:
 
 After preprocessing, overall test accuracy decreased slightly for both models. The Decision Tree decreased from 62.8% to 61.1%, while Logistic Regression decreased from 67.9% to 65.7%. The Decision Tree still shows substantial overfitting, although its train–test gap decreased from 20.1 to 18.0 percentage points. The most important change appears in class-1 recall: Decision Tree recall decreased from 0.49 to 0.45, while Logistic Regression recall decreased more noticeably from 0.61 to 0.48. This means both models became worse at identifying actual class-1 cases after preprocessing. The class-1 F1-score also decreased for both models. On the other hand, Logistic Regression improved its recall for class 0 from 0.74 to 0.80. Preprocessing also standardized inconsistent race labels, making the false-positive-rate fairness analysis much more reliable.
 
@@ -30,6 +30,10 @@ We compared four classifiers using stratified 5-fold cross-validation on the dev
 | Random Forest       | 0.734      | 0.637           | +0.097 |  (overfitting)
 | Decision Tree       | 0.699      | 0.604           | +0.096 |
 | Dummy               | 0.549      | 0.549           | 0.000  |
+
+# Week 5 Hyperparameter Tuning
+
+This week, we applied hyperparameter tuning using Optuna and nested 5-fold cross-validation to improve model performance while avoiding overly optimistic evaluation. Tuning substantially improved the tree-based models: Decision Tree accuracy increased from 60.1% to 67.4%, while Random Forest improved from 63.7% to 68.2%, becoming our best-performing model. Logistic Regression remained stable at 67.3%, suggesting that its original configuration was already effective. The train–validation gaps also decreased significantly for the tree-based models, indicating reduced overfitting and better generalization. Overall, we learned that hyperparameter tuning can improve performance, but its benefits depend on the model. The locked test set remained untouched to preserve an unbiased final evaluation.
 
 ## Project structure
 

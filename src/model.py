@@ -5,6 +5,8 @@ from sklearn.tree import DecisionTreeClassifier
 from sklearn.dummy import DummyClassifier
 from sklearn.ensemble import RandomForestClassifier
 
+from sklearn.pipeline import Pipeline
+from src.preprocessing import build_preprocessor
 
 _MODELS = {
     "logistic_regression": LogisticRegression,
@@ -25,3 +27,10 @@ def build_model(model_config: dict):
         )
 
     return _MODELS[model_type](**params)
+
+
+def build_pipeline(preprocessing_config, model_config):
+    return Pipeline([
+        ("prep", build_preprocessor(preprocessing_config)),
+        ("model", build_model(model_config)),
+    ])

@@ -35,6 +35,11 @@ We compared four classifiers using stratified 5-fold cross-validation on the dev
 
 This week, we applied hyperparameter tuning using Optuna and nested 5-fold cross-validation to improve model performance while avoiding overly optimistic evaluation. Tuning substantially improved the tree-based models: Decision Tree accuracy increased from 60.1% to 67.4%, while Random Forest improved from 63.7% to 68.2%, becoming our best-performing model. Logistic Regression remained stable at 67.3%, suggesting that its original configuration was already effective. The train–validation gaps also decreased significantly for the tree-based models, indicating reduced overfitting and better generalization. Overall, we learned that hyperparameter tuning can improve performance, but its benefits depend on the model. The locked test set remained untouched to preserve an unbiased final evaluation.
 
+
+# Week 6 – Ensembles and Feature Engineering
+
+This week, I extended the machine learning pipeline by implementing two additional ensemble methods: AdaBoost and an Oblique Random Forest approximation using random projections and bagged decision trees. I also introduced three engineered features: `priors_per_adult_year`, `has_prior_offences`, and `juvenile_offences_total`, calculated within the pipeline to ensure consistent processing during cross-validation. I evaluated the impact of feature engineering across four models using five-fold stratified cross-validation. The results showed that engineered features did not consistently improve predictive performance: Logistic Regression improved slightly from 0.673 to 0.675, while AdaBoost decreased from 0.676 to 0.674. Random Forest and Oblique Random Forest also showed small or inconsistent changes. Separately, Optuna hyperparameter tuning improved the performance of the ensemble models, with AdaBoost achieving 0.684 and Oblique Random Forest achieving 0.682 mean nested cross-validation accuracy. Overall, these experiments demonstrated that adding features does not necessarily improve generalization and that model complexity should be evaluated through validation rather than training performance alone. The locked test set remained untouched throughout these experiments.
+
 ## Project structure
 
 ```

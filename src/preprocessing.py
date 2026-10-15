@@ -133,6 +133,43 @@ def add_missingness_indicators(df: pd.DataFrame, mnar_indicator_sources: list) -
     return out
 
 
+def add_engineered_features(X: pd.DataFrame) -> pd.DataFrame:
+    """
+    Create new features using existing predictors.
+    No target information is used.
+    """
+    X = X.copy()
+
+    age = pd.to_numeric(X["age"], errors="coerce")
+    priors = pd.to_numeric(X["priors_count"], errors="coerce")
+
+    # Feature 1: Previous offences per adult year
+    adult_years = (age - 17).clip(lower=1)
+    X["priors_per_adult_year"] = priors / adult_years
+
+    # Feature 2: Has any previous offences?
+    X["has_prior_offences"] = (priors > 0).astype(float)
+    X.loc[priors.isna(), "has_prior_offences"] = np.nan
+
+    # Feature 3: Total juvenile offences
+    juvenile_cols = [
+        "juv_fel_count",
+        "juv_misd_count",
+        "juv_other_count"
+    ]
+
+    juvenile = X[juvenile_cols].apply(
+        pd.to_numeric, errors="coerce"
+    )
+
+    X["juvenile_offences_total"] = juvenile.sum(
+        axis=1,
+        min_count=len(juvenile_cols)
+    )
+
+    return X
+
+
 def split_features_target(df: pd.DataFrame, data_config: dict, mnar_indicator_sources: list):
     """
     Returns (X, y, extras). `y` is `None` and `extras` has no target column when called
@@ -192,7 +229,20 @@ def build_preprocessor(preprocessing_config: dict) -> ColumnTransformer:
     """
     encoder_name = preprocessing_config["encoder"]
     scaler_name = preprocessing_config["scaler"]
-    numeric_features = preprocessing_config["numeric_features"]
+    
+    numeric_features = list(preprocessing_config["numeric_features"])
+
+    feature_config = preprocessing_config.get(
+        "feature_engineering", {}
+    )
+
+    if feature_config.get("enabled", False):
+        numeric_features.extend([
+            "priors_per_adult_year",
+            "has_prior_offences",
+            "juvenile_offences_total"
+        ])
+
     categorical_features = preprocessing_config["categorical_features"]
     mnar_indicator_sources = preprocessing_config.get("mnar_indicator_sources", [])
     imputation = preprocessing_config.get("imputation", {})

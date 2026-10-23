@@ -5,7 +5,12 @@ from sklearn.tree import DecisionTreeClassifier
 from sklearn.dummy import DummyClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.ensemble import AdaBoostClassifier, BaggingClassifier
+from sklearn.ensemble import GradientBoostingClassifier, HistGradientBoostingClassifier
+from sklearn.naive_bayes import GaussianNB
 from sklearn.random_projection import SparseRandomProjection
+from sklearn.base import BaseEstimator
+from sklearn.feature_selection import SelectorMixin
+import numpy as np
 
 from sklearn.pipeline import Pipeline
 from src.preprocessing import (
@@ -55,11 +60,14 @@ _MODELS = {
     "random_forest": RandomForestClassifier,
     "oblique_random_forest": oblique_random_forest,
     "adaboost": adaboost,
+    "gradient_boosting": GradientBoostingClassifier,
+    "hist_gradient_boosting": HistGradientBoostingClassifier,
+    "naive_bayes": GaussianNB,
 }
 
 def build_model(model_config: dict):
     model_type = model_config["type"]
-    params = model_config.get("params", {})
+    params = model_config.get("params") or {}
 
     if model_type not in _MODELS:
         raise ValueError(
@@ -71,7 +79,55 @@ def build_model(model_config: dict):
 
 
 
-def build_pipeline(preprocessing_config, model_config):
+class VoteSelector(SelectorMixin, BaseEstimator):
+    """
+    Keeps the features chosen by at least `min_votes` of three models,
+    fitted on the training rows only:
+        - random forest: importance above the mean
+        - gradient boosting: importance above the mean
+        - L1 logistic regression: coefficient not shrunk to zero
+    """
+
+    def __init__(self, min_votes: int = 2, random_state=None):
+        self.min_votes = min_votes
+        self.random_state = random_state
+
+    def fit(self, X, y):
+        forest = RandomForestClassifier(
+            n_estimators=200,
+            min_samples_leaf=20,
+            random_state=self.random_state,
+            n_jobs=-1,
+        ).fit(X, y)
+        booster = GradientBoostingClassifier(
+            random_state=self.random_state
+        ).fit(X, y)
+        lasso = LogisticRegression(
+            l1_ratio=1.0,
+            C=0.01,
+            solver="saga",
+            max_iter=5000,
+        ).fit(X, y)
+
+        self.votes_ = (
+            (forest.feature_importances_ > forest.feature_importances_.mean()).astype(int)
+            + (booster.feature_importances_ > booster.feature_importances_.mean())
+            + (np.abs(lasso.coef_[0]) > 1e-8)
+        )
+        self.support_ = self.votes_ >= self.min_votes
+        return self
+
+    def _get_support_mask(self):
+        return self.support_
+
+
+def build_pipeline(preprocessing_config, model_config, selection_config=None):
+    """
+    features (optional) -> prep -> select (optional) -> model.
+
+    Every learned step is inside the Pipeline, so it is re-fitted
+    on the training part of each fold.
+    """
 
     steps = []
 
@@ -92,6 +148,17 @@ def build_pipeline(preprocessing_config, model_config):
         "prep",
         build_preprocessor(preprocessing_config)
     ))
+
+    selection_config = selection_config or {}
+
+    if selection_config.get("enabled", False):
+        steps.append((
+            "select",
+            VoteSelector(
+                min_votes=selection_config.get("min_votes", 2),
+                random_state=selection_config.get("random_state"),
+            )
+        ))
 
     steps.append((
         "model",

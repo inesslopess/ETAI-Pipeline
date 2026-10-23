@@ -27,7 +27,9 @@ cv:
   n_splits: 5
   shuffle: true
   random_state: 42
-  scoring: "accuracy"
+  # Reported for every run. fbeta_<beta> weights recall beta times as much as precision.
+  metrics: ["accuracy", "balanced_accuracy", "precision", "recall", "f1", "fbeta_2", "roc_auc", "average_precision"]
+  selection_metric: "roc_auc"   # one of metrics: what tuning maximises and runs are ranked by
   n_jobs: 1
 
 
@@ -129,22 +131,44 @@ preprocessing:
 
 
 # =========================================================
-# MODEL - WEEK 5
+# MODEL 
 # =========================================================
 
+model:
+  type: "dummy"
+  params: {}
+
+model:
+  type: "logistic_regression"
+  params:
+    max_iter: 2000
+    class_weight: balanced
+
+model:
+  type: "naive_bayes"
+  params: {}
 
 model:
   type: "decision_tree"
   params:
     random_state: 42
-
+    class_weight: balanced
 
 model:
-  type: "logistic_regression"
+  type: "random_forest"
   params:
-    max_iter: 1000
+    n_estimators: 200
     random_state: 42
+    n_jobs: -1
+    class_weight: balanced
 
+model:
+  type: "oblique_random_forest"
+  params:
+    n_estimators: 200
+    n_components: 10
+    random_state: 42
+    n_jobs: -1
 
 model:
   type: "adaboost"
@@ -155,19 +179,31 @@ model:
     random_state: 42
 
 model:
-  type: "oblique_random_forest"
+  type: "gradient_boosting"
   params:
-    n_estimators: 200
-    n_components: 10
     random_state: 42
-    n_jobs: -1
-
 
 model:
-  type: "random_forest"
+  type: "hist_gradient_boosting"
   params:
-    n_estimators: 100
     random_state: 42
+    class_weight: balanced
+
+
+# =========================================================
+# FEATURE SELECTION - WEEK 7 (challenge B1)
+# =========================================================
+# VoteSelector: keeps features voted for by at least `min_votes` of
+# random forest, gradient boosting and L1 logistic regression.
+# It sits inside the Pipeline, between "prep" and "model".
+
+feature_selection:
+  enabled: false
+  min_votes: 2
+  random_state: 42
+  # Added to the model's search space when tuning is enabled.
+  search_space:
+    select__min_votes: {type: int, low: 1, high: 3}
 
 # =========================================================
 # HYPERPARAMETER TUNING - WEEK 5
@@ -204,6 +240,24 @@ tuning:
       model__n_estimators: {type: int, low: 25, high: 400, log: true}
       model__learning_rate: {type: float, low: 0.01, high: 1.0, log: true}
 
+    gradient_boosting:
+      model__n_estimators: {type: int, low: 25, high: 500, log: true}
+      model__learning_rate: {type: float, low: 0.01, high: 0.5, log: true}
+      model__max_depth: {type: int, low: 1, high: 6}
+      model__min_samples_leaf: {type: int, low: 1, high: 200, log: true}
+      model__subsample: {type: float, low: 0.5, high: 1.0}
+
+    hist_gradient_boosting:
+      model__max_iter: {type: int, low: 25, high: 500, log: true}
+      model__learning_rate: {type: float, low: 0.01, high: 0.5, log: true}
+      model__max_leaf_nodes: {type: int, low: 2, high: 63, log: true}
+      model__min_samples_leaf: {type: int, low: 5, high: 200, log: true}
+      model__l2_regularization: {type: float, low: 0.000001, high: 10.0, log: true}
+
+    naive_bayes:
+      # share of the largest feature variance added to every variance (smoothing)
+      model__var_smoothing: {type: float, low: 1.0e-12, high: 1.0, log: true}
+
 
 # =========================================================
 # OUTPUT
@@ -211,3 +265,4 @@ tuning:
 
 output:
   results_dir: "results"
+  scoreboard: "results/runs.csv"   # one row per run; delete it when data, cleaning or folds change

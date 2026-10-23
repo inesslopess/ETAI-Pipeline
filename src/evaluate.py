@@ -1,10 +1,38 @@
-"""Evaluation with stratified cross-validation and out-of-fold predictions."""
+"""Evaluation with stratified cross-validation and out-of-fold probabilities."""
 
 import numpy as np
 import pandas as pd
 
-from sklearn.metrics import classification_report
+from scipy import stats
+from sklearn.metrics import (
+    classification_report,
+    confusion_matrix,
+    fbeta_score,
+    get_scorer,
+    make_scorer,
+)
 from sklearn.model_selection import cross_validate
+
+
+def build_scorers(metrics: list) -> dict:
+    """
+    {name: scorer} for scikit-learn metric names (`accuracy`, `roc_auc`, ...),
+    plus `fbeta_<beta>` (e.g. `fbeta_2`: recall weighted twice as much as precision).
+    """
+
+    scorers = {}
+
+    for name in metrics:
+        if name.startswith("fbeta_"):
+            scorers[name] = make_scorer(
+                fbeta_score,
+                beta=float(name.split("_", 1)[1]),
+                zero_division=0,
+            )
+        else:
+            scorers[name] = get_scorer(name)
+
+    return scorers
 
 
 def cross_validate_pipeline(
@@ -12,7 +40,8 @@ def cross_validate_pipeline(
     X,
     y,
     cv,
-    scoring: str = "accuracy",
+    scorers: dict,
+    selection_metric: str,
     n_jobs: int = 1,
 ):
     """
@@ -24,12 +53,13 @@ def cross_validate_pipeline(
 
     Returns:
         fold_scores:
-            one row per fold with train score, validation score
-            and train-validation gap.
+            one row per fold with the validation score of every
+            metric, plus the train score and train-validation gap
+            of `selection_metric`.
 
-        y_oof:
-            out-of-fold predictions. Each row is predicted by
-            a model that did not train on that row.
+        oof_proba:
+            out-of-fold probability of the positive class. Each row
+            is predicted by a model that did not train on that row.
     """
 
     scores = cross_validate(
@@ -37,7 +67,7 @@ def cross_validate_pipeline(
         X,
         y,
         cv=cv,
-        scoring=scoring,
+        scoring=scorers,
         return_train_score=True,
         return_estimator=True,
         return_indices=True,
@@ -45,114 +75,114 @@ def cross_validate_pipeline(
     )
 
     fold_scores = pd.DataFrame({
-        "fold": range(1, len(scores["test_score"]) + 1),
-        "train": scores["train_score"],
-        "validation": scores["test_score"],
+        "fold": range(1, cv.get_n_splits() + 1),
+        "train": scores[f"train_{selection_metric}"],
+        "validation": scores[f"test_{selection_metric}"],
     })
 
     fold_scores["gap"] = (
         fold_scores["train"] - fold_scores["validation"]
     )
 
-    y_oof = np.empty(
-        len(X),
-        dtype=np.asarray(y).dtype,
-    )
+    for name in scorers:
+        fold_scores[name] = scores[f"test_{name}"]
+
+    oof_proba = np.empty(len(X))
 
     for model, val_idx in zip(
         scores["estimator"],
         scores["indices"]["test"],
     ):
-        y_oof[val_idx] = model.predict(X.iloc[val_idx])
+        oof_proba[val_idx] = model.predict_proba(X.iloc[val_idx])[:, 1]
 
-    return fold_scores, y_oof
+    return fold_scores, oof_proba
 
 
 def cv_report(
     fold_scores: pd.DataFrame,
-    scoring: str = "accuracy",
+    metrics: list,
+    selection_metric: str,
+    title: str,
 ) -> str:
     """
-    Prints and returns:
+    Returns (does not print):
     - result of every fold
-    - mean
-    - standard deviation
-    - train-validation gap
+    - mean and standard deviation of every metric
+    - train-validation gap of the selection metric
     """
 
     lines = [
-        f"Cross-validation ({len(fold_scores)} stratified folds, metric: {scoring})",
+        f"{title} ({len(fold_scores)} stratified folds, "
+        f"selection metric: {selection_metric})",
         "",
         fold_scores.to_string(
             index=False,
             float_format=lambda v: f"{v:.3f}",
         ),
         "",
+        fold_scores[metrics].agg(["mean", "std"]).T.to_string(
+            float_format=lambda v: f"{v:.3f}",
+        ),
+        f"\n{selection_metric}: train-validation gap "
+        f"mean = {fold_scores['gap'].mean():+.3f}",
     ]
 
-    for col in ["train", "validation", "gap"]:
-        sign = "+" if col == "gap" else ""
-
-        lines.append(
-            f"{col.capitalize():<11s} "
-            f"mean = {fold_scores[col].mean():{sign}.3f}   "
-            f"std = {fold_scores[col].std(ddof=1):.3f}"
-        )
-
-    text = "\n".join(lines)
-
-    print(text)
-
-    return text
+    return "\n".join(lines)
 
 
-def oof_classification_report(y_true, y_pred) -> str:
+def oof_classification_report(y_true, oof_proba, threshold: float = 0.5) -> str:
     """
-    Classification report using out-of-fold predictions
-    from the development set.
+    Confusion matrix and classification report of the
+    out-of-fold predictions on the development set.
     """
 
-    text = (
-        "Classification report "
-        "(out-of-fold predictions, development set):\n"
-        + classification_report(
-            y_true,
-            y_pred,
-            zero_division=0,
-        )
+    y_pred = (oof_proba >= threshold).astype(int)
+
+    cm = pd.DataFrame(
+        confusion_matrix(y_true, y_pred),
+        index=["true 0", "true 1"],
+        columns=["predicted 0", "predicted 1"],
     )
 
-    print(text)
-
-    return text
+    return (
+        f"Out-of-fold predictions, development set (threshold {threshold}):\n\n"
+        f"{cm.to_string()}\n\n"
+        f"{classification_report(y_true, y_pred, zero_division=0)}"
+    )
 
 
 def fairness_report(
     y_true,
-    y_pred,
+    oof_proba,
     extras: pd.DataFrame,
     sensitive_attr: str = "race",
+    threshold: float = 0.5,
 ) -> str:
     """
     Simple fairness check using out-of-fold predictions.
 
-    For each race group, calculates the false positive rate
-    for:
+    For each group of `sensitive_attr`, calculates the false
+    positive rate for:
         - our model
-        - COMPAS's own score
+        - COMPAS's own score ("score_text" other than "Low")
+
+    Rows with an unknown group are reported as "unknown".
     """
 
     df = extras.copy()
 
+    df[sensitive_attr] = (
+        df[sensitive_attr].astype(object).fillna("unknown")
+    )
     df["y_true"] = pd.Series(y_true).values
-    df["y_pred_model"] = y_pred
+    df["y_pred_model"] = (oof_proba >= threshold).astype(int)
 
     df["y_pred_compas"] = (
         df["score_text"] != "Low"
     ).astype(int)
 
     lines = [
-        "False positive rate by race "
+        f"False positive rate by {sensitive_attr} "
         "(development set, out-of-fold)",
         "(share of people who did NOT reoffend, "
         "but were predicted to)",
@@ -185,8 +215,35 @@ def fairness_report(
 
         lines.append("")
 
-    text = "\n".join(lines)
+    return "\n".join(lines)
 
-    print(text)
 
-    return text
+def corrected_paired_test(scores_a, scores_b, test_train_ratio: float) -> dict:
+    """
+    Corrected paired t-test (Nadeau & Bengio, 2003) for two models
+    scored on the same CV folds.
+
+    Folds share most of their training rows, so the plain t-test is
+    overconfident; the variance of the differences is inflated by
+    `test_train_ratio` (1 / (k - 1) for k-fold).
+
+    Returns the mean difference (a - b), the folds where a scores
+    higher, t and the two-sided p-value.
+    """
+
+    diff = (
+        np.asarray(scores_a, dtype=float)
+        - np.asarray(scores_b, dtype=float)
+    )
+    k = len(diff)
+
+    se = np.sqrt((1 / k + test_train_ratio) * diff.var(ddof=1))
+    t = float(diff.mean() / se) if se > 0 else 0.0
+    p_value = float(2 * stats.t.sf(abs(t), df=k - 1))
+
+    return {
+        "mean_diff": float(diff.mean()),
+        "wins": f"{int((diff > 0).sum())}/{k}",
+        "t": t,
+        "p_value": p_value,
+    }

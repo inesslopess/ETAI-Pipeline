@@ -40,6 +40,29 @@ This week, we applied hyperparameter tuning using Optuna and nested 5-fold cross
 
 This week, I extended the machine learning pipeline by implementing two additional ensemble methods: AdaBoost and an Oblique Random Forest approximation using random projections and bagged decision trees. I also introduced three engineered features: `priors_per_adult_year`, `has_prior_offences`, and `juvenile_offences_total`, calculated within the pipeline to ensure consistent processing during cross-validation. I evaluated the impact of feature engineering across four models using five-fold stratified cross-validation. The results showed that engineered features did not consistently improve predictive performance: Logistic Regression improved slightly from 0.673 to 0.675, while AdaBoost decreased from 0.676 to 0.674. Random Forest and Oblique Random Forest also showed small or inconsistent changes. Separately, Optuna hyperparameter tuning improved the performance of the ensemble models, with AdaBoost achieving 0.684 and Oblique Random Forest achieving 0.682 mean nested cross-validation accuracy. Overall, these experiments demonstrated that adding features does not necessarily improve generalization and that model complexity should be evaluated through validation rather than training performance alone. The locked test set remained untouched throughout these experiments.
 
+
+# Week 7 – Metrics, Selection Metric and Scoreboard
+
+This week, I added three new models (Gradient Boosting, HistGradientBoosting and Gaussian Naive Bayes) and changed how every model is evaluated. The pipeline now keeps out-of-fold probabilities instead of only yes/no predictions, and reports eight metrics per run (accuracy, balanced accuracy, precision, recall, F1, F2, ROC AUC and average precision), together with a confusion matrix. Every run also adds one row to a single scoreboard file (`results/runs.csv`), next to the no-model floor (a Dummy classifier scored on the same folds), so all runs can be compared directly.
+
+**Scoreboard** (ROC AUC, mean ± std over 5 stratified folds; tuned = nested cross-validation, 30 Optuna trials):
+
+| Model                  | Untuned       | Tuned (nested) |
+|------------------------|---------------|----------------|
+| Gradient Boosting      | 0.726 ± 0.013 | 0.727 ± 0.013  |
+| Random Forest          | 0.690 ± 0.018 | 0.727 ± 0.013  |
+| Oblique Random Forest  | 0.679 ± 0.014 | 0.727 ± 0.013  |
+| AdaBoost               | 0.722 ± 0.015 | 0.726 ± 0.012  |
+| HistGradientBoosting   | 0.716 ± 0.015 | 0.725 ± 0.015  |
+| Logistic Regression    | 0.722 ± 0.012 | 0.721 ± 0.011  |
+| Naive Bayes            | 0.704 ± 0.010 | 0.719 ± 0.009  |
+| Decision Tree          | 0.596 ± 0.009 | 0.717 ± 0.012  |
+| Dummy (floor)          | 0.500 ± 0.000 | –              |
+
+Every model is well above the floor of 0.500. Tuning helped most for the models that overfit with their default settings: the Decision Tree improved from 0.596 to 0.717, and Random Forest and Oblique Random Forest from about 0.68–0.69 to 0.727. After tuning, the top five models are all within 0.002 of each other (0.725–0.727), which is smaller than their fold-to-fold standard deviation (about 0.013), so none of them is clearly better than the others. Logistic Regression did not gain from tuning (0.722 vs 0.721), which shows that a simple linear model already captures most of the signal. The locked test set remained untouched.
+
+**Selection metric: ROC AUC.** I chose ROC AUC because it measures how well the model ranks people who reoffend above people who do not, across every possible threshold, so it does not depend on the arbitrary 0.5 cut-off. Unlike accuracy, it is not inflated by the class imbalance (a model predicting "no reoffence" for everyone already gets 0.549 accuracy, but only 0.500 ROC AUC). Since the threshold can be chosen later depending on the cost of false positives and false negatives, which matters for the fairness analysis, a threshold-free metric is the right one for comparing and tuning models.
+
 ## Project structure
 
 ```
@@ -68,6 +91,7 @@ This table is updated after each practical class, so you can always see what cha
 | 2 | Introduction & baseline pipeline | Initial project structure, single train/test split, simple preprocessing, Logistic Regression and Decision Tree baselines, classification metrics, fairness check and automatic result saving. |
 | 3 | Data cleaning & preprocessing | Diagnosis-driven cleaning, placeholder and invalid-value handling, category normalization, missing-value indicators, imputation, encoding and scaling inside a leak-safe preprocessing pipeline. |
 | 4 | Cross-validation & model comparison | Replaced the ordinary train/test evaluation with a locked 20% final test set and stratified 5-fold cross-validation on the 80% development set. Added out-of-fold predictions, fold-by-fold train/validation scores, mean ± standard deviation, train-validation gap, Dummy baseline and Random Forest. The final model is refitted on the full development set after cross-validation. |
+| 7 | Metrics, selection metric & scoreboard | Added Gradient Boosting, HistGradientBoosting and Gaussian Naive Bayes. Out-of-fold probabilities instead of predictions, eight metrics per run (`cv.metrics`) with a confusion matrix, one selection metric (`cv.selection_metric: roc_auc`) that tuning maximises, a no-model floor scored on the same folds, a corrected paired t-test, and a scoreboard (`results/runs.csv`) with one row per run. Optional `VoteSelector` feature-selection step (`feature_selection` in `config.yaml`). |
 
 ## Environment setup
 

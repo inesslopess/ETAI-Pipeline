@@ -139,12 +139,6 @@ model:
   params: {}
 
 model:
-  type: "logistic_regression"
-  params:
-    max_iter: 2000
-    class_weight: balanced
-
-model:
   type: "naive_bayes"
   params: {}
 
@@ -187,6 +181,12 @@ model:
   type: "hist_gradient_boosting"
   params:
     random_state: 42
+    class_weight: balanced
+
+model:
+  type: "logistic_regression"
+  params:
+    max_iter: 2000
     class_weight: balanced
 
 

@@ -63,6 +63,17 @@ Every model is well above the floor of 0.500. Tuning helped most for the models 
 
 **Selection metric: ROC AUC.** I chose ROC AUC because it measures how well the model ranks people who reoffend above people who do not, across every possible threshold, so it does not depend on the arbitrary 0.5 cut-off. Unlike accuracy, it is not inflated by the class imbalance (a model predicting "no reoffence" for everyone already gets 0.549 accuracy, but only 0.500 ROC AUC). Since the threshold can be chosen later depending on the cost of false positives and false negatives, which matters for the fairness analysis, a threshold-free metric is the right one for comparing and tuning models.
 
+# Week 8 – Feature Selection (Week 7 extra challenge B1)
+
+This week, I added a `VoteSelector` step to the pipeline, between preprocessing and the model, switched on from the `feature_selection` section of `config.yaml`. It keeps the features voted for by at least `min_votes` of three models (random forest, gradient boosting and L1 logistic regression), fitted on the training rows of each fold only. I tuned `select__min_votes` together with the model's hyperparameters, using Logistic Regression with nested cross-validation, and compared it with the same model tuned without selection on the same folds:
+
+| Logistic Regression (tuned, nested) | ROC AUC       | Fold scores                         |
+|-------------------------------------|---------------|-------------------------------------|
+| Without feature selection           | 0.721 ± 0.011 | 0.726, 0.702, 0.727, 0.727, 0.726   |
+| With feature selection              | 0.722 ± 0.009 | 0.723, 0.705, 0.727, 0.726, 0.728   |
+
+The corrected paired t-test gives a mean difference of +0.0003 (selection wins 3 of 5 folds, t = 0.19, p = 0.857), so feature selection made no significant difference. Tuning chose `min_votes = 1`, the least strict setting, which keeps every feature that at least one of the three models finds useful, so the selection was probably very mild. The engineered features in Week 6 gave the same lesson: changing the set of features does not by itself improve generalization. Because selection made the run much slower without improving the score, I left it switched off (`feature_selection.enabled: false`). The locked test set remained untouched.
+
 ## Project structure
 
 ```
@@ -91,7 +102,8 @@ This table is updated after each practical class, so you can always see what cha
 | 2 | Introduction & baseline pipeline | Initial project structure, single train/test split, simple preprocessing, Logistic Regression and Decision Tree baselines, classification metrics, fairness check and automatic result saving. |
 | 3 | Data cleaning & preprocessing | Diagnosis-driven cleaning, placeholder and invalid-value handling, category normalization, missing-value indicators, imputation, encoding and scaling inside a leak-safe preprocessing pipeline. |
 | 4 | Cross-validation & model comparison | Replaced the ordinary train/test evaluation with a locked 20% final test set and stratified 5-fold cross-validation on the 80% development set. Added out-of-fold predictions, fold-by-fold train/validation scores, mean ± standard deviation, train-validation gap, Dummy baseline and Random Forest. The final model is refitted on the full development set after cross-validation. |
-| 7 | Metrics, selection metric & scoreboard | Added Gradient Boosting, HistGradientBoosting and Gaussian Naive Bayes. Out-of-fold probabilities instead of predictions, eight metrics per run (`cv.metrics`) with a confusion matrix, one selection metric (`cv.selection_metric: roc_auc`) that tuning maximises, a no-model floor scored on the same folds, a corrected paired t-test, and a scoreboard (`results/runs.csv`) with one row per run. Optional `VoteSelector` feature-selection step (`feature_selection` in `config.yaml`). |
+| 7 | Metrics, selection metric & scoreboard | Added Gradient Boosting, HistGradientBoosting and Gaussian Naive Bayes. Out-of-fold probabilities instead of predictions, eight metrics per run (`cv.metrics`) with a confusion matrix, one selection metric (`cv.selection_metric: roc_auc`) that tuning maximises, a no-model floor scored on the same folds, a corrected paired t-test, and a scoreboard (`results/runs.csv`) with one row per run. |
+| 8 | Feature selection (W7 challenge B1) | Optional `VoteSelector` step between preprocessing and the model (`feature_selection` in `config.yaml`), keeping features voted for by at least `min_votes` of random forest, gradient boosting and L1 logistic regression. `select__min_votes` tuned with the model; with vs without selection compared with the corrected paired t-test (no significant difference, so left off). |
 
 ## Environment setup
 

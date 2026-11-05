@@ -74,11 +74,42 @@ This week, I added a `VoteSelector` step to the pipeline, between preprocessing 
 
 The corrected paired t-test gives a mean difference of +0.0003 (selection wins 3 of 5 folds, t = 0.19, p = 0.857), so feature selection made no significant difference. Tuning chose `min_votes = 1`, the least strict setting, which keeps every feature that at least one of the three models finds useful, so the selection was probably very mild. The engineered features in Week 6 gave the same lesson: changing the set of features does not by itself improve generalization. Because selection made the run much slower without improving the score, I left it switched off (`feature_selection.enabled: false`). The locked test set remained untouched.
 
+# Week 8 – XGBoost and Feature Selection in every model
+
+In this week i add a new model, XGBoost. In this one trees are added one by one, and each one fixes the mistakes of the ones before. The difference is that it has extra "brakes" that stop a tree from making a split that barely helps (gamma, reg_alpha, reg_lambda, min_child_weight). Its default settings overfit easily, so it needs tuning.
+Cache (memory=). Before, every tuning trial redid the preprocessing and the feature selection from zero, even when only the model's settings changed. Now they're saved in a temporary folder and reused. The results are the same, it's just faster. 
+Faster L1 voter, so liblinear instead of saga.
+The output now shows which features the final model uses.
+I also change how the config was structure so now one python main.py runs all the models.
+
+**XGBoost with and without feature selection**
+
+Without selection: 0.728. With selection: 0.726  (uses only 4 of the 13 features: age, priors_count, priors_per_adult_year and has_prior_offences.)
+The difference is −0.002, and the paired test gives p = 0.343, so it isn't significant. It's basically the same score. 
+
+**Changes in all models:**
+None changed significantly. All p-values are above 0.3, and all differences are smaller than 0.003.
+The normal variation between folds is about ±0.012, much bigger than any difference, so the differences are just noise.
+The 3 simple models (Naive Bayes, Decision Tree, Logistic Regression) went up a tiny bit. The 6 ensembles went down a tiny bit. A possible reason is that ensembles of trees already ignore useless features on their own, because they simply don't split on them. So removing those features doesn't help them.
+Every model with selection kept only 3 or 4 features (age and the priors-related ones).
+Always removed; the juvenile counts, sex, charge degree and the missing-value indicators.
+
+**Best model overall** 
+XGBoost without selection is now at the top of the scoreboard (0.728).
+But the next models are within 0.001, so it's a tie, not a clear winner. 
+
+**keep selection on or off?**
+Still deciding, honestly.
+Off: it doesn't improve the score, and it makes runs slower.
+On: the same score with only 4 features is simpler and easier to explain.
+
+
 ## Project structure
 
 ```
 .
-├── main.py                # entry point: run the whole pipeline
+├── main.py                # entry point: run the whole pipeline (every model in config.yaml)
+├── compare_selection.py   # with vs without feature selection, per model (reads results/runs.csv)
 ├── config.yaml             # all tunable settings live here
 ├── requirements.txt
 ├── src/
@@ -104,6 +135,7 @@ This table is updated after each practical class, so you can always see what cha
 | 4 | Cross-validation & model comparison | Replaced the ordinary train/test evaluation with a locked 20% final test set and stratified 5-fold cross-validation on the 80% development set. Added out-of-fold predictions, fold-by-fold train/validation scores, mean ± standard deviation, train-validation gap, Dummy baseline and Random Forest. The final model is refitted on the full development set after cross-validation. |
 | 7 | Metrics, selection metric & scoreboard | Added Gradient Boosting, HistGradientBoosting and Gaussian Naive Bayes. Out-of-fold probabilities instead of predictions, eight metrics per run (`cv.metrics`) with a confusion matrix, one selection metric (`cv.selection_metric: roc_auc`) that tuning maximises, a no-model floor scored on the same folds, a corrected paired t-test, and a scoreboard (`results/runs.csv`) with one row per run. |
 | 8 | Feature selection (W7 challenge B1) | Optional `VoteSelector` step between preprocessing and the model (`feature_selection` in `config.yaml`), keeping features voted for by at least `min_votes` of random forest, gradient boosting and L1 logistic regression. `select__min_votes` tuned with the model; with vs without selection compared with the corrected paired t-test (no significant difference, so left off). |
+| 8 | XGBoost & feature selection in every model | XGBoost (`"xgboost"` in `_MODELS`, search space with `gamma`, `reg_alpha`, `reg_lambda`, `min_child_weight`). Pipeline cache (`memory=`, a temporary folder per run) so tuning doesn't refit preprocessing and selection in every trial; `liblinear` L1 voter; kept features printed and saved, selection setting in the report header. `models:` list in `config.yaml`: one `python main.py` runs every model. `compare_selection.py`: with vs without selection for every model (no significant difference for any of them). |
 
 ## Environment setup
 
@@ -162,6 +194,8 @@ folder, on any OS:
 ```bash
 python main.py
 ```
+
+**One command runs every model.** `config.yaml` has a `models:` list; `python main.py` loads and splits the data once, then runs each model in the list one after another (cross-validation, no-model floor, tuning with nested CV if `tuning.enabled`, reports, scoreboard row), all on the same folds. Each model gets its own report (`results/run_<time>_<model>.txt`) and its own row in `results/runs.csv`, and a ranked summary of all models is printed at the end. To run only some models, comment the others out in the list.
 
 This loads `config.yaml`, loads and preprocesses the data, trains the model, and prints:
 - **train accuracy and test accuracy, side by side.** Comparing the two is how you catch overfitting: if the model looks much better on the data it was trained on than on data it's never seen, it has memorised rather than learned something that generalises. 

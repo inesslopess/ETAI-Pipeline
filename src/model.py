@@ -11,6 +11,7 @@ from sklearn.random_projection import SparseRandomProjection
 from sklearn.base import BaseEstimator
 from sklearn.feature_selection import SelectorMixin
 import numpy as np
+from xgboost import XGBClassifier
 
 from sklearn.pipeline import Pipeline
 from src.preprocessing import (
@@ -63,6 +64,7 @@ _MODELS = {
     "gradient_boosting": GradientBoostingClassifier,
     "hist_gradient_boosting": HistGradientBoostingClassifier,
     "naive_bayes": GaussianNB,
+    "xgboost": XGBClassifier,
 }
 
 def build_model(model_config: dict):
@@ -105,8 +107,7 @@ class VoteSelector(SelectorMixin, BaseEstimator):
         lasso = LogisticRegression(
             l1_ratio=1.0,
             C=0.01,
-            solver="saga",
-            max_iter=5000,
+            solver="liblinear",   # same L1 penalty as saga, much faster
         ).fit(X, y)
 
         self.votes_ = (
@@ -121,12 +122,19 @@ class VoteSelector(SelectorMixin, BaseEstimator):
         return self.support_
 
 
-def build_pipeline(preprocessing_config, model_config, selection_config=None):
+def build_pipeline(preprocessing_config, model_config, selection_config=None,
+                   memory=None):
     """
     features (optional) -> prep -> select (optional) -> model.
 
     Every learned step is inside the Pipeline, so it is re-fitted
     on the training part of each fold.
+
+    `memory` (a folder) caches the fitted steps before the model
+    (features, prep, select): a fit on the same rows with the same
+    settings is reused instead of repeated, so tuning the model
+    doesn't refit the VoteSelector in every trial. Same results,
+    less time.
     """
 
     steps = []
@@ -165,4 +173,4 @@ def build_pipeline(preprocessing_config, model_config, selection_config=None):
         build_model(model_config)
     ))
 
-    return Pipeline(steps)
+    return Pipeline(steps, memory=memory)

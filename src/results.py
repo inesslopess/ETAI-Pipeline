@@ -19,10 +19,18 @@ def save_run(results_dir: str, run: str, config: dict, report_text: str) -> str:
 
     path = os.path.join(results_dir, f"run_{run}.txt")
     cv_config = config["cv"]
+    selection = config.get("feature_selection") or {}
+    if selection.get("enabled", False):
+        selection_line = (f"Feature selection: on  (VoteSelector, min_votes={selection.get('min_votes')}"
+                          + (", min_votes tuned" if config.get("tuning", {}).get("enabled") else "")
+                          + ")")
+    else:
+        selection_line = "Feature selection: off"
 
     header = (
         f"Run: {run}\n"
         f"Model: {config['model']['type']}  params={config['model'].get('params')}\n"
+        f"{selection_line}\n"
         f"Test size: {config['test_set']['size']}  "
         f"random_state: {config['test_set']['random_state']}\n"
         f"Metrics: {', '.join(cv_config['metrics'])}\n"

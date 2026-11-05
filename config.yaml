@@ -1,7 +1,5 @@
 
-# =========================================================
-# DATA
-# =========================================================
+# DATA -------------------------------------------------------------------------------
 
 data:
   path: "data/compas_two_year_recidivism.csv"
@@ -10,18 +8,16 @@ data:
   drop_columns: ["id", "decile_score", "score_text"]
 
 
-# =========================================================
-# TEST SET
-# =========================================================
+
+# TEST SET ------------------------------------------------------------------------
 
 test_set:
   size: 0.2
   random_state: 42
 
 
-# =========================================================
-# CROSS-VALIDATION
-# =========================================================
+
+# CROSS-VALIDATION ----------------------------------------------------------------
 
 cv:
   n_splits: 5
@@ -33,9 +29,9 @@ cv:
   n_jobs: 1
 
 
-# =========================================================
-# DATA DIAGNOSTICS AND CLEANING
-# =========================================================
+
+# DATA DIAGNOSTICS AND CLEANING ------------------------------------------------------------
+
 
 diagnostics:
   id_column: "id"
@@ -98,9 +94,9 @@ diagnostics:
     - "juvenile_total"
 
 
-# =========================================================
-# PREPROCESSING - WEEK 3
-# =========================================================
+
+# PREPROCESSING -----------------------------------------------------------------------
+
 
 preprocessing:
   encoder: "target"
@@ -130,69 +126,74 @@ preprocessing:
     categorical_strategy: "most_frequent"
 
 
-# =========================================================
-# MODEL 
-# =========================================================
 
-model:
-  type: "dummy"
-  params: {}
+# MODELS ----------------------------------------------------------------------------
 
-model:
-  type: "naive_bayes"
-  params: {}
+# `python main.py` runs every model in this list, one after another,
+# with the same data, folds, preprocessing, feature selection and
+# tuning settings. Each model gets its own report in results/ and its
+# own row in the scoreboard. To run only some models, comment the
+# others out (put # in front of their lines).
 
-model:
-  type: "decision_tree"
-  params:
-    random_state: 42
-    class_weight: balanced
+# The dummy is not in the list: every run already scores it on the
+# same folds as the "no-model floor".
 
-model:
-  type: "random_forest"
-  params:
-    n_estimators: 200
-    random_state: 42
-    n_jobs: -1
-    class_weight: balanced
+models:
+  - type: "naive_bayes"
+    params: {}
 
-model:
-  type: "oblique_random_forest"
-  params:
-    n_estimators: 200
-    n_components: 10
-    random_state: 42
-    n_jobs: -1
+  - type: "decision_tree"
+    params:
+      random_state: 42
+      class_weight: balanced
 
-model:
-  type: "adaboost"
-  params:
-    max_depth: 1
-    n_estimators: 200
-    learning_rate: 1.0
-    random_state: 42
+  - type: "random_forest"
+    params:
+      n_estimators: 200
+      random_state: 42
+      n_jobs: -1
+      class_weight: balanced
 
-model:
-  type: "gradient_boosting"
-  params:
-    random_state: 42
+  - type: "oblique_random_forest"
+    params:
+      n_estimators: 200
+      n_components: 10
+      random_state: 42
+      n_jobs: -1
 
-model:
-  type: "hist_gradient_boosting"
-  params:
-    random_state: 42
-    class_weight: balanced
+  - type: "adaboost"
+    params:
+      max_depth: 1
+      n_estimators: 200
+      learning_rate: 1.0
+      random_state: 42
 
-model:
-  type: "logistic_regression"
-  params:
-    max_iter: 2000
-    class_weight: balanced
+  - type: "gradient_boosting"
+    params:
+      random_state: 42
+
+  - type: "hist_gradient_boosting"
+    params:
+      random_state: 42
+      class_weight: balanced
+
+  - type: "logistic_regression"
+    params:
+      max_iter: 2000
+      class_weight: balanced
+
+  - type: "xgboost"
+    params:
+      n_estimators: 300
+      learning_rate: 0.05
+      max_depth: 4
+      random_state: 42
+      n_jobs: -1
 
 
-# =========================================================
-# FEATURE SELECTION - WEEK 7 (challenge B1)
-# =========================================================
+
+# FEATURE SELECTION --------------------------------------------------------------------
+
 # VoteSelector: keeps features voted for by at least `min_votes` of
 # random forest, gradient boosting and L1 logistic regression.
 # It sits inside the Pipeline, between "prep" and "model".
@@ -205,10 +206,8 @@ feature_selection:
   search_space:
     select__min_votes: {type: int, low: 1, high: 3}
 
-# =========================================================
-# HYPERPARAMETER TUNING - WEEK 5
-# =========================================================
 
+# HYPERPARAMETER TUNING --------------------------------------------
 
 tuning:
   enabled: true
@@ -258,10 +257,21 @@ tuning:
       # share of the largest feature variance added to every variance (smoothing)
       model__var_smoothing: {type: float, low: 1.0e-12, high: 1.0, log: true}
 
+    xgboost:
+      # includes the brakes inside each split: min_child_weight, reg_lambda, reg_alpha, gamma
+      model__n_estimators: {type: int, low: 50, high: 600, log: true}
+      model__learning_rate: {type: float, low: 0.01, high: 0.3, log: true}
+      model__max_depth: {type: int, low: 1, high: 8}
+      model__min_child_weight: {type: float, low: 1.0, high: 50.0, log: true}
+      model__subsample: {type: float, low: 0.5, high: 1.0}
+      model__colsample_bytree: {type: float, low: 0.5, high: 1.0}
+      model__reg_lambda: {type: float, low: 0.01, high: 10.0, log: true}
+      model__reg_alpha: {type: float, low: 0.001, high: 10.0, log: true}
+      model__gamma: {type: float, low: 0.0, high: 5.0}
 
-# =========================================================
-# OUTPUT
-# =========================================================
+
+
+# OUTPUT ----------------------------------------------------------------------------
 
 output:
   results_dir: "results"

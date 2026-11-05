@@ -11,6 +11,7 @@ This orchestrates the full pipeline:
     -> remove duplicate training rows
     -> split features/target
     -> lock final test set
+    then, for EVERY model in config.yaml -> models, one after another:
     -> stratified 5-fold cross-validation on development data
        (every metric in cv.metrics, out-of-fold probabilities)
     -> no-model floor (dummy) on the same folds
@@ -20,6 +21,8 @@ This orchestrates the full pipeline:
     -> save the report and add one row to the scoreboard
 """
 
+import shutil
+import tempfile
 from datetime import datetime
 
 import optuna
@@ -59,10 +62,6 @@ def load_config(path: str = "config.yaml") -> dict:
 
 def main():
     config = load_config()
-    run = datetime.now().strftime("%Y%m%d_%H%M%S")
-    model_type = config["model"]["type"]
-    selection_config = config.get("feature_selection", {})
-    selection_enabled = selection_config.get("enabled", False)
 
     # ---------------------------------------------------------
     # 1. LOAD DATA
@@ -128,6 +127,46 @@ def main():
     )
 
     # ---------------------------------------------------------
+    # RUN EVERY MODEL IN config.yaml -> models, ONE AFTER ANOTHER
+    # ---------------------------------------------------------
+    # The data above is loaded, cleaned and split ONCE.
+    # Each model then goes through steps 6-13 in run_model(),
+    # with the same folds, so all runs stay comparable.
+    model_configs = config.get("models") or [config["model"]]
+    summary = []
+
+    for i, model_config in enumerate(model_configs, start=1):
+        print("\n" + "=" * 70)
+        print(f"[{i}/{len(model_configs)}] {model_config['type']}")
+        print("=" * 70)
+
+        # Same config, with "model" set to the model of this round.
+        run_config = {**config, "model": model_config}
+        summary.append(run_model(run_config, X_dev, y_dev, extras_dev, len(X_test)))
+
+    selection_metric = config["cv"]["selection_metric"]
+    print("\n" + "=" * 70)
+    print(f"Done: {len(summary)} models   ({selection_metric}, mean ± std over the folds; best first)")
+    print("=" * 70)
+    for s in sorted(summary, key=lambda s: s["mean"], reverse=True):
+        print(f"  {s['model']:<24s} {s['mean']:.3f} ± {s['std']:.3f}"
+              f"   {'tuned' if s['tuned'] else 'untuned'}   report: {s['report']}")
+
+
+def run_model(config, X_dev, y_dev, extras_dev, n_test):
+    """
+    Steps 6-13 for ONE model (config["model"]): cross-validation,
+    no-model floor, optional tuning (nested CV), reports, refit,
+    scoreboard row and saved report. Returns a short summary.
+    """
+    model_type = config["model"]["type"]
+    # The model name is in the run id, so two models that finish
+    # in the same second do not overwrite each other's report.
+    run = datetime.now().strftime("%Y%m%d_%H%M%S") + f"_{model_type}"
+    selection_config = config.get("feature_selection", {})
+    selection_enabled = selection_config.get("enabled", False)
+
+    # ---------------------------------------------------------
     # 6. METRICS AND STRATIFIED CROSS-VALIDATION
     # ---------------------------------------------------------
     # Every metric in cv.metrics is reported;
@@ -150,7 +189,7 @@ def main():
           f"{cv_config['n_splits']}-fold CV"
           + ("   |   feature selection: on" if selection_enabled else ""))
     print(f"Data:  {len(X_dev)} development rows   |   "
-          f"{len(X_test)} test rows locked away (not used)")
+          f"{n_test} test rows locked away (not used)")
 
     # ---------------------------------------------------------
     # 7. BUILD THE WHOLE PIPELINE
@@ -159,10 +198,18 @@ def main():
     # inside the sklearn Pipeline, so every CV fold learns its own
     # imputations, encoding, scaling and selected features
     # using only that fold's training data.
+    #
+    # Cache folder: a new, empty folder for this run (deleted at the
+    # end). The Pipeline stores each fitted prep/select step there and
+    # reuses it when the same step is fitted on the same rows again
+    # (a later tuning trial on the same fold). Same results, less time.
+    cache_dir = tempfile.mkdtemp(prefix="pipeline_cache_")
+
     pipeline = build_pipeline(
         config["preprocessing"],
         config["model"],
         selection_config,
+        memory=cache_dir,
     )
 
     # ---------------------------------------------------------
@@ -204,16 +251,16 @@ def main():
     # ---------------------------------------------------------
     tuning_config = config.get("tuning", {})
     tuning_enabled = tuning_config.get("enabled", False)
+    search_spaces = tuning_config.get("search_spaces") or {}
+
+    # With many models in one go, a model without a search space is
+    # run untuned instead of stopping all the models after it.
+    if tuning_enabled and model_type not in search_spaces:
+        print(f"\nNo tuning.search_spaces for '{model_type}' in config.yaml: "
+              f"this model is run untuned.")
+        tuning_enabled = False
 
     if tuning_enabled:
-
-        search_spaces = tuning_config.get("search_spaces") or {}
-
-        if model_type not in search_spaces:
-            raise ValueError(
-                f"tuning is enabled but config.yaml has no tuning.search_spaces for "
-                f"'{model_type}'. Add one, or set tuning.enabled: false."
-            )
 
         search_space = dict(search_spaces[model_type] or {})
 
@@ -288,6 +335,20 @@ def main():
     refit = f"Final model: {model_type} refit on all {len(X_dev)} development rows."
     report += "\n" + refit + "\n"
 
+    # Which features the final model actually uses.
+    all_features = pipeline.named_steps["prep"].get_feature_names_out()
+    if "select" in pipeline.named_steps:
+        selector = pipeline.named_steps["select"]
+        kept = list(all_features[selector.get_support()])
+        votes = ", ".join(f"{name}={v}" for name, v in zip(all_features, selector.votes_))
+        features = (f"Features kept: {len(kept)} of {len(all_features)} "
+                    f"(min_votes = {selector.min_votes}): {', '.join(kept)}\n"
+                    f"Votes (of 3): {votes}")
+    else:
+        features = (f"Features kept: all {len(all_features)} "
+                    f"(feature selection off): {', '.join(all_features)}")
+    report += features + "\n"
+
     # ---------------------------------------------------------
     # 12. SCOREBOARD: ONE ROW PER RUN, ALL RUNS IN ONE FILE
     # ---------------------------------------------------------
@@ -359,7 +420,20 @@ def main():
         report,
     )
 
-    print(f"\n{refit}\nFull report (per-fold tables, tuning, confusion matrix, fairness): {path}")
+    # Delete the cache folder and everything in it (it is only
+    # useful during this run). ignore_errors: don't crash if Windows
+    # still has a file open; the system cleans its temp folder anyway.
+    shutil.rmtree(cache_dir, ignore_errors=True)
+
+    print(f"\n{refit}\n{features}\nFull report (per-fold tables, tuning, confusion matrix, fairness): {path}")
+
+    return {
+        "model": model_type,
+        "tuned": tuning_enabled,
+        "mean": final_scores["validation"].mean(),
+        "std": final_scores["validation"].std(ddof=1),
+        "report": path,
+    }
 
 
 if __name__ == "__main__":

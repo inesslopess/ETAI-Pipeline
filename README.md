@@ -94,6 +94,24 @@ The 3 simple models (Naive Bayes, Decision Tree, Logistic Regression) went up a 
 Every model with selection kept only 3 or 4 features (age and the priors-related ones).
 Always removed; the juvenile counts, sex, charge degree and the missing-value indicators.
 
+**How many votes? (extra challenge B2)**
+
+When tuning is on, `min_votes` is chosen again in every outer fold. These are the values chosen for each model:
+
+| Model | `min_votes` per outer fold |
+|---|---|
+| Naive Bayes | 1, 2, 2, 1, 2 |
+| Decision Tree | 1, 3, 3, 1, 2 |
+| Random Forest | 2, 2, 2, 2, 2 |
+| Oblique Random Forest | 2, 2, 1, 2, 2 |
+| AdaBoost | 2, 2, 2, 1, 1 |
+| Gradient Boosting | 2, 2, 2, 2, 2 |
+| HistGradientBoosting | 2, 2, 1, 2, 2 |
+| Logistic Regression | 1, 2, 2, 1, 1 |
+| XGBoost | 1, 2, 2, 1, 2 |
+
+Only Random Forest and Gradient Boosting picked the same number (2) every time. For the other models it changes from fold to fold. So 1, 2 or 3 votes give almost the same score, and the number of votes doesn't really matter. This makes sense, because selection didn't change the scores either.
+
 **Best model overall** 
 XGBoost without selection is now at the top of the scoreboard (0.728).
 But the next models are within 0.001, so it's a tie, not a clear winner. 

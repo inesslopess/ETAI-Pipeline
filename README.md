@@ -98,10 +98,9 @@ Always removed; the juvenile counts, sex, charge degree and the missing-value in
 XGBoost without selection is now at the top of the scoreboard (0.728).
 But the next models are within 0.001, so it's a tie, not a clear winner. 
 
-**keep selection on or off?**
-Still deciding, honestly.
-Off: it doesn't improve the score, and it makes runs slower.
-On: the same score with only 4 features is simpler and easier to explain.
+**Keep selection on or off?**
+
+I decided to keep it off (`feature_selection.enabled: false`). It didn't improve the score for any of the 9 models, and it makes the runs slower (XGBoost took 16 minutes with selection and 7 without). COMPAS only has 13 features and the models already ignore the weak ones, so there isn't much to remove. The main argument for turning it on would be a simpler model with only 4 features, which is easier to explain.
 
 
 ## Project structure

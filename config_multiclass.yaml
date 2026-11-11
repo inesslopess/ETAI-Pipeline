@@ -1,0 +1,283 @@
+
+# DATA -------------------------------------------------------------------------------
+
+data:
+  path: "data/compas_two_year_recidivism.csv"
+  target: "score_text"
+  sensitive_attr: "race"
+  drop_columns: ["id", "decile_score", "two_year_recid"]   #in preprocessing we remove the target
+
+# FAIRNESS ----------------------------------------------------------------------------
+
+fairness:
+  positive_class: "High"        # "flagged" = predicted High; FPR = not truly High, but predicted High
+  compare_compas_score: false   # score_text IS the target now: comparing it with itself means nothing
+
+
+# TEST SET ------------------------------------------------------------------------
+
+test_set:
+  size: 0.2
+  random_state: 42
+
+
+
+# CROSS-VALIDATION ----------------------------------------------------------------
+
+cv:
+  n_splits: 5
+  shuffle: true
+  random_state: 42
+  metrics: ["accuracy", "balanced_accuracy", "precision_macro", "recall_macro", "f1_macro", "roc_auc_ovr"]
+  selection_metric: "roc_auc_ovr"   
+  n_jobs: 1
+
+
+
+# DATA DIAGNOSTICS AND CLEANING ------------------------------------------------------------
+
+
+diagnostics:
+  id_column: "id"
+
+  candidate_predictors:
+    - "sex"
+    - "race"
+    - "age_cat"
+    - "c_charge_degree"
+    - "score_text"
+
+  numeric_text_columns:
+    - "priors_count"
+    - "prior_offenses"
+
+  placeholder_tokens:
+    - "-"
+    - "?"
+    - "n/a"
+    - "N/A"
+    - "na"
+    - "NA"
+    - ""
+    - "nan"
+
+  validity_rules:
+    age: {min: 18, max: 100}
+    decile_score: {min: 1, max: 10}
+    juv_fel_count: {min: 0}
+    priors_count: {min: 0, max: 60}
+
+  canonical_categories:
+    sex:
+      male: "Male"
+      female: "Female"
+
+    race:
+      african-american: "African-American"
+      african american: "African-American"
+      caucasian: "Caucasian"
+      hispanic: "Hispanic"
+      other: "Other"
+      asian: "Asian"
+      native american: "Native American"
+
+    c_charge_degree:
+      f: "F"
+      felony: "F"
+      m: "M"
+      misdemeanor: "M"
+
+    score_text:
+      low: "Low"
+      medium: "Medium"
+      high: "High"
+
+  redundant_columns:
+    - "prior_offenses"
+    - "age_in_months"
+    - "juvenile_total"
+
+
+
+# PREPROCESSING -----------------------------------------------------------------------
+
+
+preprocessing:
+  encoder: "target"
+  scaler: "robust"
+  random_state: 42 
+  
+  feature_engineering:
+    enabled: true
+
+  numeric_features:
+    - "age"
+    - "juv_fel_count"
+    - "juv_misd_count"
+    - "juv_other_count"
+    - "priors_count"
+
+  categorical_features:
+    - "sex"
+    - "age_cat"
+    - "c_charge_degree"
+
+  mnar_indicator_sources:
+    - "priors_count"
+    - "c_charge_degree"
+
+  imputation:
+    numeric_strategy: "median"
+    categorical_strategy: "most_frequent"
+
+
+
+# MODELS ----------------------------------------------------------------------------
+
+# `python main.py` runs every model in this list, one after another,
+# with the same data, folds, preprocessing, feature selection and
+# tuning settings. Each model gets its own report in results/ and its
+# own row in the scoreboard. To run only some models, comment the
+# others out (put # in front of their lines).
+
+# The dummy is not in the list: every run already scores it on the
+# same folds as the "no-model floor".
+
+models:
+  - type: "naive_bayes"
+    params: {}
+
+  - type: "decision_tree"
+    params:
+      random_state: 42
+      class_weight: balanced
+
+  - type: "random_forest"
+    params:
+      n_estimators: 200
+      random_state: 42
+      n_jobs: -1
+      class_weight: balanced
+
+  - type: "oblique_random_forest"
+    params:
+      n_estimators: 200
+      n_components: 10
+      random_state: 42
+      n_jobs: -1
+
+  - type: "adaboost"
+    params:
+      max_depth: 1
+      n_estimators: 200
+      learning_rate: 1.0
+      random_state: 42
+
+  - type: "gradient_boosting"
+    params:
+      random_state: 42
+
+  - type: "hist_gradient_boosting"
+    params:
+      random_state: 42
+      class_weight: balanced
+
+  - type: "logistic_regression"
+    params:
+      max_iter: 2000
+      class_weight: balanced
+
+  - type: "xgboost"
+    params:
+      n_estimators: 300
+      learning_rate: 0.05
+      max_depth: 4
+      random_state: 42
+      n_jobs: -1
+
+
+
+# FEATURE SELECTION --------------------------------------------------------------------
+
+# VoteSelector: keeps features voted for by at least `min_votes` of
+# random forest, gradient boosting and L1 logistic regression.
+# It sits inside the Pipeline, between "prep" and "model".
+
+feature_selection:
+  enabled: false
+  min_votes: 2
+  random_state: 42
+  # Added to the model's search space when tuning is enabled.
+  search_space:
+    select__min_votes: {type: int, low: 1, high: 3}
+
+
+# HYPERPARAMETER TUNING --------------------------------------------
+
+tuning:
+  enabled: true
+  n_trials: 30 
+  n_splits: 5
+  random_state: 42
+
+  search_spaces:
+    decision_tree:
+      model__max_depth: {type: int, low: 1, high: 20}
+      model__min_samples_leaf: {type: int, low: 1, high: 200, log: true}
+      model__criterion: {type: categorical, choices: ["gini", "entropy"]}
+
+    logistic_regression:
+      model__C: {type: float, low: 0.0001, high: 100.0, log: true}
+
+    random_forest:
+      model__max_depth: {type: int, low: 2, high: 30}
+      model__min_samples_leaf: {type: int, low: 1, high: 200, log: true}
+      model__max_features: {type: categorical, choices: ["sqrt", 0.5, 1.0]}
+
+    oblique_random_forest:
+      model__estimator__tree__max_depth: {type: int, low: 2, high: 30}
+      model__estimator__tree__min_samples_leaf: {type: int, low: 1, high: 200, log: true}
+      model__estimator__project__n_components: {type: int, low: 3, high: 10}
+
+    adaboost:
+      model__estimator__max_depth: {type: int, low: 1, high: 8}
+      model__n_estimators: {type: int, low: 25, high: 400, log: true}
+      model__learning_rate: {type: float, low: 0.01, high: 1.0, log: true}
+
+    gradient_boosting:
+      model__n_estimators: {type: int, low: 25, high: 500, log: true}
+      model__learning_rate: {type: float, low: 0.01, high: 0.5, log: true}
+      model__max_depth: {type: int, low: 1, high: 6}
+      model__min_samples_leaf: {type: int, low: 1, high: 200, log: true}
+      model__subsample: {type: float, low: 0.5, high: 1.0}
+
+    hist_gradient_boosting:
+      model__max_iter: {type: int, low: 25, high: 500, log: true}
+      model__learning_rate: {type: float, low: 0.01, high: 0.5, log: true}
+      model__max_leaf_nodes: {type: int, low: 2, high: 63, log: true}
+      model__min_samples_leaf: {type: int, low: 5, high: 200, log: true}
+      model__l2_regularization: {type: float, low: 0.000001, high: 10.0, log: true}
+
+    naive_bayes:
+      # share of the largest feature variance added to every variance (smoothing)
+      model__var_smoothing: {type: float, low: 1.0e-12, high: 1.0, log: true}
+
+    xgboost:
+      # includes the brakes inside each split: min_child_weight, reg_lambda, reg_alpha, gamma
+      model__n_estimators: {type: int, low: 50, high: 600, log: true}
+      model__learning_rate: {type: float, low: 0.01, high: 0.3, log: true}
+      model__max_depth: {type: int, low: 1, high: 8}
+      model__min_child_weight: {type: float, low: 1.0, high: 50.0, log: true}
+      model__subsample: {type: float, low: 0.5, high: 1.0}
+      model__colsample_bytree: {type: float, low: 0.5, high: 1.0}
+      model__reg_lambda: {type: float, low: 0.01, high: 10.0, log: true}
+      model__reg_alpha: {type: float, low: 0.001, high: 10.0, log: true}
+      model__gamma: {type: float, low: 0.0, high: 5.0}
+
+
+
+# OUTPUT ----------------------------------------------------------------------------
+
+output:
+  results_dir: "results/multiclass"
+  scoreboard: "results/multiclass/runs.csv"  

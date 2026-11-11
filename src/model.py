@@ -104,16 +104,25 @@ class VoteSelector(SelectorMixin, BaseEstimator):
         booster = GradientBoostingClassifier(
             random_state=self.random_state
         ).fit(X, y)
+        # liblinear is the fast L1 solver, but it only handles 2 classes;
+        # saga applies the same L1 penalty to 3+ classes.
+        binary = len(np.unique(y)) == 2
         lasso = LogisticRegression(
             l1_ratio=1.0,
             C=0.01,
-            solver="liblinear",   # same L1 penalty as saga, much faster
+            solver="liblinear" if binary else "saga",
+            max_iter=100 if binary else 2000,
         ).fit(X, y)
+
+        # coef_ has one row per class (a single row for 2 classes).
+        # A feature is "used" if it is not shrunk to zero for at least
+        # one class.
+        lasso_used = (np.abs(lasso.coef_) > 1e-8).any(axis=0)
 
         self.votes_ = (
             (forest.feature_importances_ > forest.feature_importances_.mean()).astype(int)
             + (booster.feature_importances_ > booster.feature_importances_.mean())
-            + (np.abs(lasso.coef_[0]) > 1e-8)
+            + lasso_used
         )
         self.support_ = self.votes_ >= self.min_votes
         return self

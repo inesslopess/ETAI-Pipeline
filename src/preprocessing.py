@@ -210,7 +210,9 @@ _ENCODERS = {
     ),
 
     "target": lambda seed: TargetEncoder(
-        target_type="binary",
+        # "auto": binary for 0/1 (as before), multiclass for 0/1/2
+        # (then one column per category PER CLASS).
+        target_type="auto",
         cv=StratifiedKFold(
             5,
             shuffle=True,

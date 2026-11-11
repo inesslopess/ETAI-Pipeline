@@ -67,10 +67,10 @@ Every model is well above the floor of 0.500. Tuning helped most for the models 
 
 This week, I added a `VoteSelector` step to the pipeline, between preprocessing and the model, switched on from the `feature_selection` section of `config.yaml`. It keeps the features voted for by at least `min_votes` of three models (random forest, gradient boosting and L1 logistic regression), fitted on the training rows of each fold only. I tuned `select__min_votes` together with the model's hyperparameters, using Logistic Regression with nested cross-validation, and compared it with the same model tuned without selection on the same folds:
 
-| Logistic Regression (tuned, nested) | ROC AUC       | Fold scores                         |
-|-------------------------------------|---------------|-------------------------------------|
-| Without feature selection           | 0.721 ± 0.011 | 0.726, 0.702, 0.727, 0.727, 0.726   |
-| With feature selection              | 0.722 ± 0.009 | 0.723, 0.705, 0.727, 0.726, 0.728   |
+| Logistic Regression (tuned, nested) | ROC AUC       | Fold scores                       |
+|-------------------------------------|---------------|-----------------------------------|
+| Without feature selection           | 0.721 ± 0.011 | 0.726, 0.702, 0.727, 0.727, 0.726 |
+| With feature selection              | 0.722 ± 0.009 | 0.723, 0.705, 0.727, 0.726, 0.728 |
 
 The corrected paired t-test gives a mean difference of +0.0003 (selection wins 3 of 5 folds, t = 0.19, p = 0.857), so feature selection made no significant difference. Tuning chose `min_votes = 1`, the least strict setting, which keeps every feature that at least one of the three models finds useful, so the selection was probably very mild. The engineered features in Week 6 gave the same lesson: changing the set of features does not by itself improve generalization. Because selection made the run much slower without improving the score, I left it switched off (`feature_selection.enabled: false`). The locked test set remained untouched.
 
@@ -98,17 +98,17 @@ Always removed; the juvenile counts, sex, charge degree and the missing-value in
 
 When tuning is on, `min_votes` is chosen again in every outer fold. These are the values chosen for each model:
 
-| Model | `min_votes` per outer fold |
-|---|---|
-| Naive Bayes | 1, 2, 2, 1, 2 |
-| Decision Tree | 1, 3, 3, 1, 2 |
-| Random Forest | 2, 2, 2, 2, 2 |
-| Oblique Random Forest | 2, 2, 1, 2, 2 |
-| AdaBoost | 2, 2, 2, 1, 1 |
-| Gradient Boosting | 2, 2, 2, 2, 2 |
-| HistGradientBoosting | 2, 2, 1, 2, 2 |
-| Logistic Regression | 1, 2, 2, 1, 1 |
-| XGBoost | 1, 2, 2, 1, 2 |
+| Model                 | `min_votes` per outer fold |
+|-----------------------|----------------------------|
+| Naive Bayes           | 1, 2, 2, 1, 2              |
+| Decision Tree         | 1, 3, 3, 1, 2              |
+| Random Forest         | 2, 2, 2, 2, 2              |
+| Oblique Random Forest | 2, 2, 1, 2, 2              |
+| AdaBoost              | 2, 2, 2, 1, 1              |
+| Gradient Boosting     | 2, 2, 2, 2, 2              |
+| HistGradientBoosting  | 2, 2, 1, 2, 2              |
+| Logistic Regression   | 1, 2, 2, 1, 1              |
+| XGBoost               | 1, 2, 2, 1, 2              |
 
 Only Random Forest and Gradient Boosting picked the same number (2) every time. For the other models it changes from fold to fold. So 1, 2 or 3 votes give almost the same score, and the number of votes doesn't really matter. This makes sense, because selection didn't change the scores either.
 
@@ -121,13 +121,59 @@ But the next models are within 0.001, so it's a tie, not a clear winner.
 I decided to keep it off (`feature_selection.enabled: false`). It didn't improve the score for any of the 9 models, and it makes the runs slower (XGBoost took 16 minutes with selection and 7 without). COMPAS only has 13 features and the models already ignore the weak ones, so there isn't much to remove. The main argument for turning it on would be a simpler model with only 4 features, which is easier to explain.
 
 
+# Week 9 – Beyond COMPAS (option B)
+
+The target is now `score_text` (Low / Medium / High) instead of `two_year_recid`. I dropped `decile_score` (it is the same score as a number) and `two_year_recid` (it is only known two years later, so it would be leakage).
+
+**How to run**
+
+```bash
+python main.py                          # binary COMPAS, as before
+python main.py config_multiclass.yaml   # three classes
+```
+
+**What broke and how I fixed it**
+
+1. `main.py` always used `config.yaml` → the config file is now an argument (`sys.argv`).
+2. Metrics like `f1` and `roc_auc` only work for 2 classes → in the config I use `f1_macro`, `precision_macro`, `recall_macro` and `roc_auc_ovr`.
+3. `predict_proba(X)[:, 1]` kept only one class → now all the columns are kept, one per class (`evaluate.py`, `tuning.py`).
+4. The confusion matrix crashed, because the prediction was "probability ≥ 0.5" with labels 0/1 → with 3 classes it predicts the most likely class, and the matrix is 3 x 3.
+5. The fairness report needs a positive class → `positive_class: "High"` in the config (FPR = not High but predicted High).
+6. The target encoder didn't crash but was wrong: `target_type="binary"` treated the 3 classes as numbers → `target_type="auto"`.
+7. XGBoost crashed, because it only accepts labels 0, 1, 2 → `LabelEncoder` on the target in `main.py`.
+8. `VoteSelector` read only `coef_[0]`, and `liblinear` doesn't work with 3 classes → `saga` for 3 classes, and a feature counts if it is used for any class.
+9. Runs were not reproducible, because the target encoder had no seed → `random_state: 42` in `preprocessing`.
+
+The binary COMPAS run gives the same numbers as before.
+
+**Results** (tuned, nested CV)
+
+| Model                 | ROC-AUC OVR | Accuracy | Macro F1 |
+|-----------------------|-------------|----------|----------|
+| XGBoost               | 0.767       | 0.636    | 0.530    |
+| Gradient Boosting     | 0.767       | 0.633    | 0.530    |
+| AdaBoost              | 0.760       | 0.631    | 0.531    |
+| Oblique Random Forest | 0.765       | 0.633    | 0.524    |
+| Random Forest         | 0.760       | 0.601    | 0.555    |
+| Logistic Regression   | 0.759       | 0.603    | 0.558    |
+| HistGradientBoosting  | 0.759       | 0.606    | 0.558    |
+| Naive Bayes           | 0.748       | 0.605    | 0.438    |
+| Decision Tree         | 0.743       | 0.583    | 0.540    |
+| Target                | >= 0.75     | >= 0.63  | >= 0.53  |
+
+The best model is **XGBoost**, which reaches all three targets. Gradient Boosting is basically the same (p = 0.99), and AdaBoost also reaches them.
+
+The hardest assumption to find was the target encoder, because it didn't crash, it just gave wrong values. What got me to the targets was fixing the code; tuning only helped a little. The hardest class is Medium (F1 0.31, against 0.78 for Low and 0.50 for High). It sits between Low and High, so it is easily confused with both, and when the model is unsure it picks Low, the biggest class.
+
+
 ## Project structure
 
 ```
 .
 ├── main.py                # entry point: run the whole pipeline (every model in config.yaml)
 ├── compare_selection.py   # with vs without feature selection, per model (reads results/runs.csv)
-├── config.yaml             # all tunable settings live here
+├── config.yaml             # all tunable settings live here (binary COMPAS)
+├── config_multiclass.yaml  # week 9: three classes (score_text) -- python main.py config_multiclass.yaml
 ├── requirements.txt
 ├── src/
 │   ├── data.py             # loading
@@ -153,6 +199,7 @@ This table is updated after each practical class, so you can always see what cha
 | 7 | Metrics, selection metric & scoreboard | Added Gradient Boosting, HistGradientBoosting and Gaussian Naive Bayes. Out-of-fold probabilities instead of predictions, eight metrics per run (`cv.metrics`) with a confusion matrix, one selection metric (`cv.selection_metric: roc_auc`) that tuning maximises, a no-model floor scored on the same folds, a corrected paired t-test, and a scoreboard (`results/runs.csv`) with one row per run. |
 | 8 | Feature selection (W7 challenge B1) | Optional `VoteSelector` step between preprocessing and the model (`feature_selection` in `config.yaml`), keeping features voted for by at least `min_votes` of random forest, gradient boosting and L1 logistic regression. `select__min_votes` tuned with the model; with vs without selection compared with the corrected paired t-test (no significant difference, so left off). |
 | 8 | XGBoost & feature selection in every model | XGBoost (`"xgboost"` in `_MODELS`, search space with `gamma`, `reg_alpha`, `reg_lambda`, `min_child_weight`). Pipeline cache (`memory=`, a temporary folder per run) so tuning doesn't refit preprocessing and selection in every trial; `liblinear` L1 voter; kept features printed and saved, selection setting in the report header. `models:` list in `config.yaml`: one `python main.py` runs every model. `compare_selection.py`: with vs without selection for every model (no significant difference for any of them). |
+| 9 | Beyond COMPAS (option B) | `config_multiclass.yaml` predicts `score_text` (3 classes), run with `python main.py config_multiclass.yaml`. Fixed every place that assumed 2 classes (probabilities, metrics, confusion matrix, fairness, target encoder, XGBoost labels, `VoteSelector`). Binary run unchanged. |
 
 ## Environment setup
 

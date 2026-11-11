@@ -87,15 +87,21 @@ def cross_validate_pipeline(
     for name in scorers:
         fold_scores[name] = scores[f"test_{name}"]
 
-    oof_proba = np.empty(len(X))
+    # One probability column per class (2 for yes/no, 3 for Low/Medium/High),
+    # in sklearn's order (sorted), named after the class.
+    classes = np.unique(y)
+    oof_proba = np.empty((len(X), len(classes)))
 
     for model, val_idx in zip(
         scores["estimator"],
         scores["indices"]["test"],
     ):
-        oof_proba[val_idx] = model.predict_proba(X.iloc[val_idx])[:, 1]
+        oof_proba[val_idx] = model.predict_proba(X.iloc[val_idx])
+
+    oof_proba = pd.DataFrame(oof_proba, index=X.index, columns=classes)
 
     return fold_scores, oof_proba
+    
 
 
 def cv_report(
@@ -130,44 +136,79 @@ def cv_report(
     return "\n".join(lines)
 
 
-def oof_classification_report(y_true, oof_proba, threshold: float = 0.5) -> str:
+def predict_from_proba(oof_proba: pd.DataFrame, threshold: float = 0.5) -> pd.Series:
+    """
+    One predicted class per row, from the probability table.
+      - 2 classes: the second class if its probability >= threshold
+        (the movable yes/no threshold, exactly as before);
+      - 3+ classes: the class with the highest probability (argmax).
+    """
+    classes = oof_proba.columns
+
+    if len(classes) == 2:
+        return pd.Series(
+            np.where(oof_proba[classes[1]] >= threshold, classes[1], classes[0]),
+            index=oof_proba.index,
+        )
+
+    return oof_proba.idxmax(axis=1)
+
+
+def oof_classification_report(y_true, oof_proba: pd.DataFrame, threshold: float = 0.5) -> str:
     """
     Confusion matrix and classification report of the
     out-of-fold predictions on the development set.
+    Works for 2 classes (threshold) and 3+ classes (highest probability).
     """
 
-    y_pred = (oof_proba >= threshold).astype(int)
+    classes = list(oof_proba.columns)
+    y_pred = predict_from_proba(oof_proba, threshold)
 
     cm = pd.DataFrame(
-        confusion_matrix(y_true, y_pred),
-        index=["true 0", "true 1"],
-        columns=["predicted 0", "predicted 1"],
+        confusion_matrix(y_true, y_pred, labels=classes),
+        index=[f"true {c}" for c in classes],
+        columns=[f"predicted {c}" for c in classes],
     )
 
+    rule = f"threshold {threshold}" if len(classes) == 2 else "highest probability"
+
     return (
-        f"Out-of-fold predictions, development set (threshold {threshold}):\n\n"
+        f"Out-of-fold predictions, development set ({rule}):\n\n"
         f"{cm.to_string()}\n\n"
-        f"{classification_report(y_true, y_pred, zero_division=0)}"
+        f"{classification_report(y_true, y_pred, labels=classes, zero_division=0)}"
     )
+
 
 
 def fairness_report(
     y_true,
-    oof_proba,
+    oof_proba: pd.DataFrame,
     extras: pd.DataFrame,
     sensitive_attr: str = "race",
     threshold: float = 0.5,
+    positive_class=None,
+    compare_compas: bool = True,
 ) -> str:
     """
     Simple fairness check using out-of-fold predictions.
 
-    For each group of `sensitive_attr`, calculates the false
-    positive rate for:
+    `positive_class` is the class that counts as "flagged"
+    (binary: 1, the default = the last class; three classes: e.g. "High").
+
+    For each group of `sensitive_attr`, the false positive rate is:
+        among people NOT truly in `positive_class`,
+        the share predicted to be in it.
+
+    For:
         - our model
-        - COMPAS's own score ("score_text" other than "Low")
+        - COMPAS's own score ("score_text" other than "Low"), if
+          `compare_compas` (turn it off when score_text is the target)
 
     Rows with an unknown group are reported as "unknown".
     """
+
+    if positive_class is None:
+        positive_class = oof_proba.columns[-1]
 
     df = extras.copy()
 
@@ -175,30 +216,33 @@ def fairness_report(
         df[sensitive_attr].astype(object).fillna("unknown")
     )
     df["y_true"] = pd.Series(y_true).values
-    df["y_pred_model"] = (oof_proba >= threshold).astype(int)
-
-    df["y_pred_compas"] = (
-        df["score_text"] != "Low"
+    df["y_pred_model"] = (
+        predict_from_proba(oof_proba, threshold).values == positive_class
     ).astype(int)
+
+    predictions = [("Our model", "y_pred_model")]
+
+    if compare_compas:
+        df["y_pred_compas"] = (
+            df["score_text"] != "Low"
+        ).astype(int)
+        predictions.append(("COMPAS's own score", "y_pred_compas"))
 
     lines = [
         f"False positive rate by {sensitive_attr} "
         "(development set, out-of-fold)",
-        "(share of people who did NOT reoffend, "
-        "but were predicted to)",
+        f"(share of people NOT truly '{positive_class}', "
+        f"but predicted '{positive_class}')",
         "",
     ]
 
-    for label, col in [
-        ("Our model", "y_pred_model"),
-        ("COMPAS's own score", "y_pred_compas"),
-    ]:
+    for label, col in predictions:
 
         lines.append(f"  {label}:")
 
         for group, g in df.groupby(sensitive_attr):
 
-            negatives = g[g["y_true"] == 0]
+            negatives = g[g["y_true"] != positive_class]
 
             if len(negatives) == 0:
                 continue
@@ -216,6 +260,7 @@ def fairness_report(
         lines.append("")
 
     return "\n".join(lines)
+
 
 
 def corrected_paired_test(scores_a, scores_b, test_train_ratio: float) -> dict:

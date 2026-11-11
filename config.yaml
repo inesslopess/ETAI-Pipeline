@@ -101,7 +101,8 @@ diagnostics:
 preprocessing:
   encoder: "target"
   scaler: "robust"
-
+  random_state: 42 
+  
   feature_engineering:
     enabled: true
 

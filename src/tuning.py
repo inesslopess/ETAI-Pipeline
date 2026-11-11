@@ -92,7 +92,9 @@ def nested_cross_validate(pipeline, X, y, outer_cv, inner_cv, scorers: dict,
     """
     selection_scorer = scorers[selection_metric]
     rows = []
-    oof_proba = np.empty(len(X))
+    classes = np.unique(y)
+    oof_proba = np.empty((len(X), len(classes)))
+
 
     for fold, (train_idx, val_idx) in enumerate(outer_cv.split(X, y), start=1):
         X_train, y_train = X.iloc[train_idx], y.iloc[train_idx]
@@ -111,7 +113,7 @@ def nested_cross_validate(pipeline, X, y, outer_cv, inner_cv, scorers: dict,
             for name, scorer in scorers.items()
         }
 
-        oof_proba[val_idx] = best_pipeline.predict_proba(X_val)[:, 1]
+        oof_proba[val_idx] = best_pipeline.predict_proba(X_val)
 
         rows.append({
             "fold": fold,
@@ -123,7 +125,9 @@ def nested_cross_validate(pipeline, X, y, outer_cv, inner_cv, scorers: dict,
             **study.best_params
         })
 
+    oof_proba = pd.DataFrame(oof_proba, index=X.index, columns=classes)
     return pd.DataFrame(rows), oof_proba
+
 
 
 def tuning_report(study, nested_scores: pd.DataFrame,

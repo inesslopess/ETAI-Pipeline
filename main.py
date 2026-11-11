@@ -2,7 +2,9 @@
 Entry point for the predictive pipeline.
 
 Run with:
-    python main.py
+    python main.py                          (binary COMPAS: config.yaml)
+    python main.py config_multiclass.yaml   (3 classes: score_text)
+
 
 This orchestrates the full pipeline:
     load config
@@ -20,7 +22,9 @@ This orchestrates the full pipeline:
     -> refit final model on the full development set
     -> save the report and add one row to the scoreboard
 """
-
+import sys
+import pandas as pd
+from sklearn.preprocessing import LabelEncoder
 import shutil
 import tempfile
 from datetime import datetime
@@ -61,29 +65,29 @@ def load_config(path: str = "config.yaml") -> dict:
 
 
 def main():
-    config = load_config()
 
-    # ---------------------------------------------------------
-    # 1. LOAD DATA
-    # ---------------------------------------------------------
+    #   python main.py                        -> config.yaml (binary COMPAS)
+    #   python main.py config_multiclass.yaml -> the 3-class problem
+
+    config_path = sys.argv[1] if len(sys.argv) > 1 else "config.yaml"
+    print(f"Config: {config_path}")
+    config = load_config(config_path)
+
+    # 1. LOAD DATA ---------------------------------------------------
+
     df_raw = load_data(config["data"]["path"])
 
-    # ---------------------------------------------------------
-    # 2. CLEAN DATA
-    # ---------------------------------------------------------
+    # 2. CLEAN DATA  -----------------------------------------------
     # General cleaning only:
     # placeholders -> NaN, category cleanup, invalid values,
     # redundant-column removal.
-    #
     # clean_dataset() does NOT remove rows anymore.
     df_clean = clean_dataset(
         df_raw,
         config["diagnostics"],
     )
 
-    # ---------------------------------------------------------
-    # 3. REMOVE DUPLICATES
-    # ---------------------------------------------------------
+    # 3. REMOVE DUPLICATES -------------------------------------------
     # Duplicate removal is training-dataset preparation.
     # It is kept separate from general cleaning.
     df_clean = drop_duplicate_rows(
@@ -91,9 +95,8 @@ def main():
         id_column=config["diagnostics"].get("id_column"),
     )
 
-    # ---------------------------------------------------------
-    # 4. SPLIT FEATURES / TARGET / EXTRAS
-    # ---------------------------------------------------------
+
+    # 4. SPLIT FEATURES / TARGET / EXTRAS ---------------------------------------------------------
     mnar_sources = config["preprocessing"].get(
         "mnar_indicator_sources",
         [],
@@ -105,11 +108,20 @@ def main():
         mnar_sources,
     )
 
-    # ---------------------------------------------------------
-    # 5. LOCK FINAL TEST SET
-    # ---------------------------------------------------------
+    # 4b. TARGET AS NUMBERS 0, 1, 2, ... ------------------------------
+    # XGBoost only accepts classes written as 0, 1, 2, ..., so every
+    # model gets the target as numbers.
+    #   binary COMPAS: 0/1 stays 0/1 (nothing changes)
+    #   three classes: High/Low/Medium -> 0/1/2 (alphabetical order)
+    # class_names remembers the names, so the reports can show them.
+    label_encoder = LabelEncoder().fit(y)
+    y = pd.Series(label_encoder.transform(y), index=y.index, name=y.name)
+    class_names = label_encoder.classes_
+    print("Classes: " + ", ".join(f"{i} = {name}" for i, name in enumerate(class_names)))
+
+
+    # 5. LOCK FINAL TEST SET ---------------------------------------------
     # The 20% test set is created once and remains untouched.
-    #
     # Cross-validation happens ONLY on X_dev / y_dev.
     (
         X_dev,
@@ -142,7 +154,7 @@ def main():
 
         # Same config, with "model" set to the model of this round.
         run_config = {**config, "model": model_config}
-        summary.append(run_model(run_config, X_dev, y_dev, extras_dev, len(X_test)))
+        summary.append(run_model(run_config, X_dev, y_dev, extras_dev, len(X_test), class_names))
 
     selection_metric = config["cv"]["selection_metric"]
     print("\n" + "=" * 70)
@@ -153,7 +165,7 @@ def main():
               f"   {'tuned' if s['tuned'] else 'untuned'}   report: {s['report']}")
 
 
-def run_model(config, X_dev, y_dev, extras_dev, n_test):
+def run_model(config, X_dev, y_dev, extras_dev, n_test, class_names):
     """
     Steps 6-13 for ONE model (config["model"]): cross-validation,
     no-model floor, optional tuning (nested CV), reports, refit,
@@ -318,13 +330,22 @@ def run_model(config, X_dev, y_dev, extras_dev, n_test):
     for name in metrics:
         print(f"  {name:<18s} {final_scores[name].mean():.3f} ± {final_scores[name].std(ddof=1):.3f}")
 
-    report += "\n\n" + oof_classification_report(y_dev, oof_proba)
+
+    # The reports use the class names, not the numbers 0/1/2.
+    y_dev_named = pd.Series(class_names[y_dev], index=y_dev.index)
+    oof_proba_named = oof_proba.set_axis(class_names, axis=1)
+
+    report += "\n\n" + oof_classification_report(y_dev_named, oof_proba_named)
+    fairness_config = config.get("fairness", {})
     report += "\n" + fairness_report(
-        y_dev,
-        oof_proba,
+        y_dev_named,
+        oof_proba_named,
         extras_dev,
         sensitive_attr=config["data"]["sensitive_attr"],
+        positive_class=fairness_config.get("positive_class"),
+        compare_compas=fairness_config.get("compare_compas_score", True),
     )
+
 
     # ---------------------------------------------------------
     # 11. REFIT FINAL MODEL ON ALL DEVELOPMENT DATA

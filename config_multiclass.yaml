@@ -127,8 +127,12 @@ preprocessing:
     - "c_charge_degree"
 
   imputation:
-    numeric_strategy: "median"
+    numeric_strategy: "median"                      # median | mean | knn | iterative | random_forest
     categorical_strategy: "most_frequent"
+    n_neighbors: 5                                  # knn
+    max_iter: 10                                    # iterative, random_forest
+    n_estimators: 50                                # random_forest (trees per column)
+    use_categorical: false                          # B2: the numeric imputer also sees the categorical columns
 
 
 
@@ -281,3 +285,4 @@ tuning:
 output:
   results_dir: "results/multiclass"
   scoreboard: "results/multiclass/runs.csv"  
+  model_path: "models/model_multiclass.joblib"      # the best model of the run, refit on all dev rows; used by predict.py (overwritten each run)

@@ -22,9 +22,12 @@ Two things every function here respects, on purpose:
 """
 import numpy as np
 import pandas as pd
+from sklearn.base import BaseEstimator, TransformerMixin, clone
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
-from sklearn.impute import SimpleImputer
+from sklearn.experimental import enable_iterative_imputer   # noqa: F401  (makes IterativeImputer importable)
+from sklearn.impute import IterativeImputer, KNNImputer, SimpleImputer
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split
 
 from sklearn.preprocessing import (
@@ -221,6 +224,66 @@ _ENCODERS = {
     ),
 }
 
+# Numeric imputers (W10). "iterative" is MICE with one completed dataset; "random_forest" is the
+# missForest idea (each column predicted from the others by a random forest). Both learn only
+# from the feature columns, never from the target, so they also run on data to predict.
+_NUMERIC_IMPUTERS = {
+    "median": lambda cfg, seed: SimpleImputer(strategy="median"),
+    "mean": lambda cfg, seed: SimpleImputer(strategy="mean"),
+    "knn": lambda cfg, seed: KNNImputer(n_neighbors=cfg.get("n_neighbors", 5)),
+    "iterative": lambda cfg, seed: IterativeImputer(max_iter=cfg.get("max_iter", 10), random_state=seed),
+    "random_forest": lambda cfg, seed: IterativeImputer(
+        estimator=RandomForestRegressor(n_estimators=cfg.get("n_estimators", 50), min_samples_leaf=5,
+                                        random_state=seed, n_jobs=-1),
+        max_iter=cfg.get("max_iter", 10), random_state=seed),
+}
+
+
+class NumericImputerWithHelpers(BaseEstimator, TransformerMixin):
+    """
+    W10 challenge B2: the numeric imputer also SEES the categorical columns.
+
+    Input: the numeric columns + the categorical "helper" columns.
+    1. numeric columns are scaled (scalers ignore NaN when fitting);
+    2. helper columns get their gaps filled with the most frequent value and are
+       one-hot encoded (only the features, never the target: no label trap);
+    3. the imputer fills the numeric gaps looking at all of them;
+    4. ONLY the numeric columns come out. The categorical columns are still
+       encoded by the normal categorical branch, so the model sees the same
+       columns as before -- only the filled-in values change.
+    """
+
+    def __init__(self, numeric_columns, helper_columns, scaler, imputer):
+        self.numeric_columns = numeric_columns
+        self.helper_columns = helper_columns
+        self.scaler = scaler
+        self.imputer = imputer
+
+    def _helpers(self, X):
+        return self.helper_encoder_.transform(self.helper_imputer_.transform(X[self.helper_columns]))
+
+    def _scaled(self, X):
+        numeric = X[self.numeric_columns]
+        return numeric.to_numpy(dtype=float) if self.scaler_ is None else self.scaler_.transform(numeric)
+
+    def fit(self, X, y=None):
+        X = pd.DataFrame(X)
+        self.scaler_ = None if self.scaler == "passthrough" else clone(self.scaler).fit(X[self.numeric_columns])
+        self.helper_imputer_ = SimpleImputer(strategy="most_frequent").fit(X[self.helper_columns])
+        self.helper_encoder_ = OneHotEncoder(handle_unknown="ignore", sparse_output=False).fit(
+            self.helper_imputer_.transform(X[self.helper_columns]))
+        self.imputer_ = clone(self.imputer).fit(np.hstack([self._scaled(X), self._helpers(X)]))
+        return self
+
+    def transform(self, X):
+        X = pd.DataFrame(X)
+        filled = self.imputer_.transform(np.hstack([self._scaled(X), self._helpers(X)]))
+        return filled[:, :len(self.numeric_columns)]          # the numeric columns only
+
+    def get_feature_names_out(self, input_features=None):
+        return np.asarray(self.numeric_columns, dtype=object)
+
+
 def build_preprocessor(preprocessing_config: dict) -> ColumnTransformer:
     """
     Factory: builds a leak-safe ColumnTransformer for this week's chosen encoder/scaler
@@ -228,6 +291,10 @@ def build_preprocessor(preprocessing_config: dict) -> ColumnTransformer:
     grid in 02_preprocessing.ipynb, not hardcoded here). Every encoder tolerates unseen
     categories at transform time; fit happens on the training fold only, via the
     surrounding sklearn Pipeline's own fit/transform discipline.
+
+    Numeric columns are SCALED FIRST, THEN IMPUTED (W10): KNN measures distances, so
+    every column must be on one scale; scalers ignore NaN when they learn the scale.
+    The imputer comes from `imputation.numeric_strategy` (see _NUMERIC_IMPUTERS).
     """
     encoder_name = preprocessing_config["encoder"]
     scaler_name = preprocessing_config["scaler"]
@@ -256,10 +323,24 @@ def build_preprocessor(preprocessing_config: dict) -> ColumnTransformer:
     preprocessing_config.get("random_state")
     )
 
-    numeric_pipeline = Pipeline([
-        ("impute", SimpleImputer(strategy=imputation.get("numeric_strategy", "median"))),
-        ("scale", scaler),
-    ])
+    numeric_strategy = imputation.get("numeric_strategy", "median")
+    if numeric_strategy not in _NUMERIC_IMPUTERS:
+        raise ValueError(f"Unknown numeric_strategy: {numeric_strategy}. Options: {list(_NUMERIC_IMPUTERS)}")
+
+    numeric_imputer = _NUMERIC_IMPUTERS[numeric_strategy](imputation, preprocessing_config.get("random_state"))
+
+    # B2: with use_categorical, the numeric imputer also sees the categorical
+    # columns (as helpers); otherwise, scale -> impute as before.
+    if imputation.get("use_categorical", False):
+        numeric_pipeline = NumericImputerWithHelpers(
+            numeric_features, list(categorical_features), scaler, numeric_imputer)
+        numeric_inputs = numeric_features + list(categorical_features)
+    else:
+        numeric_pipeline = Pipeline([
+            ("scale", scaler),
+            ("impute", numeric_imputer),
+        ])
+        numeric_inputs = numeric_features
     categorical_pipeline = Pipeline([
         ("impute", SimpleImputer(strategy=imputation.get("categorical_strategy", "most_frequent"))),
         ("encode", encoder),
@@ -268,7 +349,7 @@ def build_preprocessor(preprocessing_config: dict) -> ColumnTransformer:
     indicator_cols = [f"{c}_was_missing" for c in mnar_indicator_sources]
 
     return ColumnTransformer([
-        ("numeric", numeric_pipeline, numeric_features),
+        ("numeric", numeric_pipeline, numeric_inputs),
         ("categorical", categorical_pipeline, categorical_features),
         ("indicators", "passthrough", indicator_cols),
     ])

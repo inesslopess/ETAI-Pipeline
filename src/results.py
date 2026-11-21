@@ -5,9 +5,34 @@ Printing to the terminal is fine while you're watching it happen, but it's gone 
 - the full report of each run (metrics, confusion matrix, fairness table, tuning) to a timestamped file in `results/`;
 - one row per run to a single scoreboard CSV (`results/runs.csv`), so every run can be compared side by side.
 """
+import json
 import os
+import platform
 
+import joblib
 import pandas as pd
+
+
+def library_versions() -> dict:
+    """The versions that matter for loading a saved model (W10 challenge B4)."""
+    import numpy
+    import sklearn
+    import xgboost
+    return {"python": platform.python_version(), "scikit-learn": sklearn.__version__,
+            "xgboost": xgboost.__version__, "pandas": pd.__version__, "numpy": numpy.__version__}
+
+
+def versions_path(model_path: str) -> str:
+    """models/model.joblib -> models/model_versions.json"""
+    return os.path.splitext(model_path)[0] + "_versions.json"
+
+
+def save_model(pipeline, model_path: str) -> None:
+    """Saves the fitted pipeline, and the library versions it was saved with next to it."""
+    os.makedirs(os.path.dirname(model_path) or ".", exist_ok=True)
+    joblib.dump(pipeline, model_path)
+    with open(versions_path(model_path), "w") as f:
+        json.dump(library_versions(), f, indent=2)
 
 
 def save_run(results_dir: str, run: str, config: dict, report_text: str) -> str:
@@ -31,6 +56,9 @@ def save_run(results_dir: str, run: str, config: dict, report_text: str) -> str:
         f"Run: {run}\n"
         f"Model: {config['model']['type']}  params={config['model'].get('params')}\n"
         f"{selection_line}\n"
+        f"Numeric imputer: {config['preprocessing'].get('imputation', {}).get('numeric_strategy', 'median')}"
+        + ("  (also sees the categorical columns)"
+           if config['preprocessing'].get('imputation', {}).get('use_categorical') else "") + "\n"
         f"Test size: {config['test_set']['size']}  "
         f"random_state: {config['test_set']['random_state']}\n"
         f"Metrics: {', '.join(cv_config['metrics'])}\n"

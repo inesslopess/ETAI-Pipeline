@@ -21,8 +21,11 @@ This orchestrates the full pipeline:
     -> out-of-fold evaluation (confusion matrix, fairness)
     -> refit final model on the full development set
     -> save the report and add one row to the scoreboard
+    finally: save the best model's fitted pipeline (output.model_path),
+    which predict.py loads to predict new people.
 """
 import sys
+
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
 import shutil
@@ -50,7 +53,7 @@ from src.evaluate import (
     fairness_report,
     corrected_paired_test,
 )
-from src.results import save_run, save_scores
+from src.results import save_model, save_run, save_scores, versions_path
 from src.tuning import (
     tune_pipeline,
     nested_cross_validate,
@@ -164,6 +167,21 @@ def main():
         print(f"  {s['model']:<24s} {s['mean']:.3f} ± {s['std']:.3f}"
               f"   {'tuned' if s['tuned'] else 'untuned'}   report: {s['report']}")
 
+    # ---------------------------------------------------------
+    # SAVE THE BEST MODEL (W10): what predict.py loads
+    # ---------------------------------------------------------
+    # Every model above was refit on all development rows. The one
+    # with the best cross-validated score is saved: the whole fitted
+    # Pipeline (cleaning rules aside), with every learned value
+    # (imputer, encoder, scaler, model).
+    best = max(summary, key=lambda s: s["mean"])
+    # The library versions are saved next to it (B4): a model should be
+    # loaded with the same scikit-learn / XGBoost it was saved with.
+    model_path = config.get("output", {}).get("model_path", "models/model.joblib")
+    save_model(best["pipeline"], model_path)
+    print(f"\nSaved the best model ({best['model']}, {selection_metric} {best['mean']:.3f}) -> {model_path}"
+          f"   (library versions -> {versions_path(model_path)})")
+
 
 def run_model(config, X_dev, y_dev, extras_dev, n_test, class_names):
     """
@@ -177,6 +195,10 @@ def run_model(config, X_dev, y_dev, extras_dev, n_test, class_names):
     run = datetime.now().strftime("%Y%m%d_%H%M%S") + f"_{model_type}"
     selection_config = config.get("feature_selection", {})
     selection_enabled = selection_config.get("enabled", False)
+    imputation = config["preprocessing"].get("imputation", {})
+    imputer = imputation.get("numeric_strategy", "median")
+    if imputation.get("use_categorical", False):
+        imputer += "+categorical"       # B2: the imputer also sees the categorical columns
 
     # ---------------------------------------------------------
     # 6. METRICS AND STRATIFIED CROSS-VALIDATION
@@ -198,7 +220,7 @@ def run_model(config, X_dev, y_dev, extras_dev, n_test, class_names):
     )
 
     print(f"Model: {model_type}   |   selection metric: {selection_metric}   |   "
-          f"{cv_config['n_splits']}-fold CV"
+          f"{cv_config['n_splits']}-fold CV   |   imputer: {imputer}"
           + ("   |   feature selection: on" if selection_enabled else ""))
     print(f"Data:  {len(X_dev)} development rows   |   "
           f"{n_test} test rows locked away (not used)")
@@ -383,6 +405,7 @@ def run_model(config, X_dev, y_dev, extras_dev, n_test, class_names):
         "feature_selection": selection_enabled,
         "encoder": config["preprocessing"]["encoder"],
         "scaler": config["preprocessing"]["scaler"],
+        "imputer": imputer,
         "params": str(config["model"].get("params")),
         "tuned_params": str(study.best_params) if tuning_enabled else "",
         "metric": selection_metric,
@@ -399,11 +422,13 @@ def run_model(config, X_dev, y_dev, extras_dev, n_test, class_names):
         row,
     )
 
-    same = runs[(runs["data"] == row["data"]) & (runs["metric"] == selection_metric)]
+    same = runs[(runs["data"] == row["data"]) & (runs["metric"] == selection_metric)].copy()
     same = same.sort_values("mean", ascending=False)
+    # Runs from before W10 have no imputer column: they all used the median.
+    same["imputer"] = same["imputer"].fillna("median")
 
     board = (
-        same[["run", "model", "tuned", "feature_selection", "encoder", "scaler",
+        same[["run", "model", "tuned", "feature_selection", "encoder", "scaler", "imputer",
               "mean", "std", "untuned", "floor"]]
         .rename(columns={"mean": selection_metric})
         .to_string(index=False, float_format=lambda v: f"{v:.3f}")
@@ -424,7 +449,8 @@ def run_model(config, X_dev, y_dev, extras_dev, n_test, class_names):
         )
         comparison = (
             f"This run vs best other run ({best['model']}"
-            f"{', tuned' if best['tuned'] else ''}, run {best['run']}), corrected paired t-test:\n"
+            f"{', tuned' if best['tuned'] else ''}, imputer {best['imputer']}, run {best['run']}), "
+            f"corrected paired t-test:\n"
             f"  mean diff = {test['mean_diff']:+.4f}   wins = {test['wins']}   "
             f"t = {test['t']:.2f}   p = {test['p_value']:.3f}"
         )
@@ -445,6 +471,8 @@ def run_model(config, X_dev, y_dev, extras_dev, n_test, class_names):
     # useful during this run). ignore_errors: don't crash if Windows
     # still has a file open; the system cleans its temp folder anyway.
     shutil.rmtree(cache_dir, ignore_errors=True)
+    # The cache folder is gone; the saved model must not point to it.
+    pipeline.set_params(memory=None)
 
     print(f"\n{refit}\n{features}\nFull report (per-fold tables, tuning, confusion matrix, fairness): {path}")
 
@@ -454,6 +482,7 @@ def run_model(config, X_dev, y_dev, extras_dev, n_test, class_names):
         "mean": final_scores["validation"].mean(),
         "std": final_scores["validation"].std(ddof=1),
         "report": path,
+        "pipeline": pipeline,     # fitted on all dev rows; main() saves the best one
     }
 
 

@@ -166,11 +166,75 @@ The best model is **XGBoost**, which reaches all three targets. Gradient Boostin
 The hardest assumption to find was the target encoder, because it didn't crash, it just gave wrong values. What got me to the targets was fixing the code; tuning only helped a little. The hardest class is Medium (F1 0.31, against 0.78 for Low and 0.50 for High). It sits between Low and High, so it is easily confused with both, and when the model is unsure it picks Low, the biggest class.
 
 
+# Week 10 – Missing values and predicting new data
+
+**The imputer is now a setting**
+
+The way the gaps in the numeric columns are filled is now chosen in `config.yaml` (`preprocessing.imputation.numeric_strategy`): `median`, `mean`, `knn`, `iterative` (MICE, one completed dataset) or `random_forest` (the missForest idea). All of them learn only from the features, never from the target, so they work the same in cross-validation and on new people. The numeric columns are now scaled first and then imputed, because KNN measures distances and needs every column on the same scale.
+
+I ran XGBoost (tuning off) once with each imputer, on the same folds, and compared each one with the median using the corrected paired t-test:
+
+| Imputer       | ROC-AUC       | vs median | Wins | p     | Time  |
+|---------------|---------------|-----------|------|-------|-------|
+| median        | 0.722 ± 0.018 | –         | –    | –     | 39 s  |
+| knn           | 0.721 ± 0.014 | −0.001    | 1/5  | 0.654 | 37 s  |
+| iterative     | 0.724 ± 0.017 | +0.002    | 4/5  | 0.543 | 30 s  |
+| random_forest | 0.723 ± 0.014 | +0.001    | 2/5  | 0.744 | 215 s |
+
+**Which imputer do I keep?** I kept the median. None of the other imputers is significantly better (all p > 0.5, and every difference is much smaller than the ±0.015 variation between folds), and `random_forest` is more than 5 times slower. The model-based imputers can't do better here because they only see the five numeric columns, which say little about each other (for example, the juvenile counts barely tell you someone's age).
+
+**Predicting new data**
+
+At the end of `python main.py`, the best model of the run (already refit on all development rows) is saved to `models/model.joblib` (`output.model_path` in `config.yaml`). After the full run (all 9 models tuned, median imputer), the saved model is the tuned XGBoost (ROC-AUC 0.729 ± 0.012). The new script `predict.py` loads it and predicts a CSV, with no training:
+
+```bash
+python main.py                                                   # train, evaluate, save models/model.joblib
+python predict.py data/compas_new_people.csv predictions.csv     # predict
+```
+
+The new file is cleaned with the same rules as the training data, but without removing duplicates, so every row gets an answer. `predictions.csv` has one row per input row (20 rows for `compas_new_people.csv`) with three columns: `id`, `probability` (the probability of reoffending within two years) and `prediction` (1 if the probability is at least 0.5, otherwise 0). Gaps and `"?"` are filled by the saved imputer, and a category never seen in training (like `"X"`) doesn't crash anything. `predict.py` is for the binary model (`config.yaml`); the three-class model is saved separately to `models/model_multiclass.joblib`.
+
+**Let the imputer see the categories (extra challenge B2)**
+
+Before, the numeric imputer only saw the numeric columns. Now, with `use_categorical: true` in `config.yaml`, it also sees the categorical ones (`sex`, `age_cat`, `c_charge_degree`), one-hot encoded, only to help it guess. It still gives back only the numeric columns, so the model gets the same columns as before. It doesn't use the target, so it also works in `predict.py`.
+
+First I checked the guesses with `python compare_imputers.py`. It hides 200 known values of `age` and `priors_count` and measures how far each guess is from the real value:
+
+| Imputer       | `age` error (years), without → with categories | `priors_count` error, without → with |
+|---------------|------------------|--------------|
+| median        | 9.16 → 9.16      | 3.08 → 3.08  |
+| knn           | 10.57 → 4.72     | 3.61 → 3.96  |
+| iterative     | 8.96 → 3.94      | 3.26 → 3.13  |
+| random_forest | 8.97 → 3.98      | 3.06 → 3.02  |
+
+The guesses for `age` got much better (the error more than halved), because `age_cat` almost tells you the age. The median doesn't change, because it never looks at other columns. `priors_count` stays hard, because no column predicts it well.
+
+Then I checked the model (XGBoost, tuning off, same folds):
+
+| Imputer                 | ROC-AUC       | vs without categories | p     | vs median | p     | Time  |
+|-------------------------|---------------|-----------------------|-------|-----------|-------|-------|
+| knn + categories        | 0.722 ± 0.013 | +0.001                | 0.740 | −0.000    | 0.985 | 108 s |
+| iterative + categories  | 0.724 ± 0.016 | +0.000                | 0.965 | +0.002    | 0.689 | 117 s |
+| random_forest + categories | 0.725 ± 0.015 | +0.002             | 0.563 | +0.003    | 0.310 | 843 s |
+
+Better guesses did not give a better model. No difference is significant. I think it's because the model already sees `age_cat` and the `_was_missing` flags, so it already has that information, and only a few values of `age` are missing. So I kept `use_categorical: false` and the median.
+
+**A safer predict.py (extra challenge B4)**
+
+- If the input is missing a column the model needs, `predict.py` stops with a clear message, for example `Error: the input is missing 2 column(s) the model needs: age, sex`, instead of a long error.
+- `main.py` saves the library versions next to the model (`models/model_versions.json`). `predict.py` gives a warning if the versions now are different, because a model should be loaded with the same scikit-learn and XGBoost it was saved with.
+- `python tests/test_predict.py` checks that rows out = rows in, that the same person twice gets the same answer, that a missing column gives the clear message, and that the versions file is saved. All 4 tests pass.
+
+
 ## Project structure
 
 ```
 .
-├── main.py                # entry point: run the whole pipeline (every model in config.yaml)
+├── main.py                # entry point: run the whole pipeline (every model in config.yaml), save the best model
+├── predict.py             # week 10: predict a new CSV with the saved model (no training)
+├── compare_imputers.py    # week 10 (B2): how well each imputer guesses hidden values
+├── tests/
+│   └── test_predict.py    # week 10 (B4): python tests/test_predict.py
 ├── compare_selection.py   # with vs without feature selection, per model (reads results/runs.csv)
 ├── config.yaml             # all tunable settings live here (binary COMPAS)
 ├── config_multiclass.yaml  # week 9: three classes (score_text) -- python main.py config_multiclass.yaml
@@ -182,8 +246,10 @@ The hardest assumption to find was the target encoder, because it didn't crash, 
 │   ├── evaluate.py         # accuracy metrics + fairness check
 │   └── results.py          # saves each run's report to disk
 ├── results/                # created automatically -- one file per run (not tracked in git)
+├── models/                 # created automatically -- model.joblib + model_versions.json (not tracked in git)
 └── data/
     ├── compas_two_year_recidivism.csv
+    ├── compas_new_people.csv  # week 10: 20 new people without the target, for predict.py
     └── README.md            # problem description + full data dictionary
 ```
 
@@ -200,6 +266,8 @@ This table is updated after each practical class, so you can always see what cha
 | 8 | Feature selection (W7 challenge B1) | Optional `VoteSelector` step between preprocessing and the model (`feature_selection` in `config.yaml`), keeping features voted for by at least `min_votes` of random forest, gradient boosting and L1 logistic regression. `select__min_votes` tuned with the model; with vs without selection compared with the corrected paired t-test (no significant difference, so left off). |
 | 8 | XGBoost & feature selection in every model | XGBoost (`"xgboost"` in `_MODELS`, search space with `gamma`, `reg_alpha`, `reg_lambda`, `min_child_weight`). Pipeline cache (`memory=`, a temporary folder per run) so tuning doesn't refit preprocessing and selection in every trial; `liblinear` L1 voter; kept features printed and saved, selection setting in the report header. `models:` list in `config.yaml`: one `python main.py` runs every model. `compare_selection.py`: with vs without selection for every model (no significant difference for any of them). |
 | 9 | Beyond COMPAS (option B) | `config_multiclass.yaml` predicts `score_text` (3 classes), run with `python main.py config_multiclass.yaml`. Fixed every place that assumed 2 classes (probabilities, metrics, confusion matrix, fairness, target encoder, XGBoost labels, `VoteSelector`). Binary run unchanged. |
+| 10 | Missing values & deployment | Numeric imputer as a setting (`_NUMERIC_IMPUTERS`: median, mean, knn, iterative, random_forest; `imputation` options in `config.yaml`); numeric columns scaled first, then imputed; imputer in the scoreboard and report header. Compared with the corrected paired t-test (no significant difference, so median kept). `main.py` saves the best fitted pipeline to `models/model.joblib`; new `predict.py` predicts a new CSV from the terminal, one row out per row in. |
+| 10 | Extra challenges B2 & B4 | B2: `use_categorical` lets the numeric imputer also see the categorical columns (`NumericImputerWithHelpers`); `compare_imputers.py` measures the guesses on hidden values (`age` error more than halved, model score not significantly different, so left off). B4: `predict.py` stops with a clear message when a column is missing, library versions saved next to the model and checked when loading, `tests/test_predict.py`. |
 
 ## Environment setup
 

@@ -234,7 +234,7 @@ A new optional step in the Pipeline, right after the preprocessor and before fea
 
 **My guess (written before running anything)**
 
-I think the anomaly score will help the model. Whether the people who reoffend are the outliers, I'm not sure: I think it depends.
+I dont think it will help much since the anomaly score is being built on columns that the model already sees so no new information.
 
 **Are the people who reoffend the outliers?** (`python check_anomalies.py`)
 
@@ -254,7 +254,7 @@ So yes, partly: the most unusual 5% reoffend more often, especially with Isolati
 | logistic_regression | 0.722 ± 0.011 | 0.722 ± 0.012    | +0.000 (0.855)  | 0.721 ± 0.011 | −0.001 (0.392)  |
 | xgboost             | 0.722 ± 0.018 | 0.721 ± 0.014    | −0.001 (0.863)  | 0.718 ± 0.016 | −0.005 (0.226)  |
 
-**Was my guess right?** No, it didn't help. No difference is significant (all p > 0.2), and LOF is even a little worse for XGBoost. The anomaly score is calculated only from columns the model already has, so it doesn't add new information: it is a summary of "young with many priors", which XGBoost can learn by itself from `age` and `priors_count`. The "it depends" part was right: the top outliers do reoffend more, but only because of their age and priors, not because they are unusual. So I kept `method: "none"`.
+**Was my guess right?** Yes, it didn't help. No difference is significant (all p > 0.2), and LOF is even a little worse for XGBoost. As I expected, the anomaly score is calculated only from columns the model already has, so it doesn't add new information: it is a summary of "young with many priors", which XGBoost can learn by itself from `age` and `priors_count`. The top outliers do reoffend more, but because of their age and priors, not because they are unusual. So I kept `method: "none"`.
 
 ## Project structure
 

@@ -199,6 +199,9 @@ def run_model(config, X_dev, y_dev, extras_dev, n_test, class_names):
     imputer = imputation.get("numeric_strategy", "median")
     if imputation.get("use_categorical", False):
         imputer += "+categorical"       # B2: the imputer also sees the categorical columns
+    # W11: which anomaly detector adds the anomaly_score column ("none" = no column)
+    anomaly_config = config.get("anomaly") or {}
+    anomaly = anomaly_config.get("method", "none")
 
     # ---------------------------------------------------------
     # 6. METRICS AND STRATIFIED CROSS-VALIDATION
@@ -220,7 +223,7 @@ def run_model(config, X_dev, y_dev, extras_dev, n_test, class_names):
     )
 
     print(f"Model: {model_type}   |   selection metric: {selection_metric}   |   "
-          f"{cv_config['n_splits']}-fold CV   |   imputer: {imputer}"
+          f"{cv_config['n_splits']}-fold CV   |   imputer: {imputer}   |   anomaly: {anomaly}"
           + ("   |   feature selection: on" if selection_enabled else ""))
     print(f"Data:  {len(X_dev)} development rows   |   "
           f"{n_test} test rows locked away (not used)")
@@ -244,6 +247,7 @@ def run_model(config, X_dev, y_dev, extras_dev, n_test, class_names):
         config["model"],
         selection_config,
         memory=cache_dir,
+        anomaly_config=anomaly_config,
     )
 
     # ---------------------------------------------------------
@@ -380,6 +384,9 @@ def run_model(config, X_dev, y_dev, extras_dev, n_test, class_names):
 
     # Which features the final model actually uses.
     all_features = pipeline.named_steps["prep"].get_feature_names_out()
+    if "anomaly" in pipeline.named_steps:
+        # W11: the anomaly step adds one more column, anomaly_score
+        all_features = pipeline.named_steps["anomaly"].get_feature_names_out(all_features)
     if "select" in pipeline.named_steps:
         selector = pipeline.named_steps["select"]
         kept = list(all_features[selector.get_support()])
@@ -406,6 +413,7 @@ def run_model(config, X_dev, y_dev, extras_dev, n_test, class_names):
         "encoder": config["preprocessing"]["encoder"],
         "scaler": config["preprocessing"]["scaler"],
         "imputer": imputer,
+        "anomaly": anomaly,
         "params": str(config["model"].get("params")),
         "tuned_params": str(study.best_params) if tuning_enabled else "",
         "metric": selection_metric,
@@ -426,10 +434,14 @@ def run_model(config, X_dev, y_dev, extras_dev, n_test, class_names):
     same = same.sort_values("mean", ascending=False)
     # Runs from before W10 have no imputer column: they all used the median.
     same["imputer"] = same["imputer"].fillna("median")
+    # Runs from before W11 have no anomaly column: they had no anomaly score.
+    if "anomaly" not in same.columns:
+        same["anomaly"] = "none"
+    same["anomaly"] = same["anomaly"].fillna("none")
 
     board = (
         same[["run", "model", "tuned", "feature_selection", "encoder", "scaler", "imputer",
-              "mean", "std", "untuned", "floor"]]
+              "anomaly", "mean", "std", "untuned", "floor"]]
         .rename(columns={"mean": selection_metric})
         .to_string(index=False, float_format=lambda v: f"{v:.3f}")
     )
@@ -449,7 +461,8 @@ def run_model(config, X_dev, y_dev, extras_dev, n_test, class_names):
         )
         comparison = (
             f"This run vs best other run ({best['model']}"
-            f"{', tuned' if best['tuned'] else ''}, imputer {best['imputer']}, run {best['run']}), "
+            f"{', tuned' if best['tuned'] else ''}, imputer {best['imputer']}, anomaly {best['anomaly']}, "
+            f"run {best['run']}), "
             f"corrected paired t-test:\n"
             f"  mean diff = {test['mean_diff']:+.4f}   wins = {test['wins']}   "
             f"t = {test['t']:.2f}   p = {test['p_value']:.3f}"

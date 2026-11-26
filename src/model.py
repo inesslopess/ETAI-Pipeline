@@ -16,7 +16,8 @@ from xgboost import XGBClassifier
 from sklearn.pipeline import Pipeline
 from src.preprocessing import (
     build_preprocessor,
-    add_engineered_features
+    add_engineered_features,
+    AnomalyScore,
 )
 from sklearn.preprocessing import FunctionTransformer
 
@@ -132,9 +133,13 @@ class VoteSelector(SelectorMixin, BaseEstimator):
 
 
 def build_pipeline(preprocessing_config, model_config, selection_config=None,
-                   memory=None):
+                   memory=None, anomaly_config=None):
     """
-    features (optional) -> prep -> select (optional) -> model.
+    features (optional) -> prep -> anomaly (optional) -> select (optional) -> model.
+
+    W11: "anomaly" (if anomaly_config["method"] is not "none") appends one
+    column, anomaly_score. It sits after prep (it needs filled, scaled,
+    encoded columns) and before select (so selection can keep or drop it).
 
     Every learned step is inside the Pipeline, so it is re-fitted
     on the training part of each fold.
@@ -165,6 +170,18 @@ def build_pipeline(preprocessing_config, model_config, selection_config=None,
         "prep",
         build_preprocessor(preprocessing_config)
     ))
+
+    anomaly_config = anomaly_config or {}
+
+    if anomaly_config.get("method", "none") != "none":
+        steps.append((
+            "anomaly",
+            AnomalyScore(
+                method=anomaly_config["method"],
+                n_neighbors=anomaly_config.get("n_neighbors", 20),
+                random_state=anomaly_config.get("random_state"),
+            )
+        ))
 
     selection_config = selection_config or {}
 

@@ -226,6 +226,36 @@ Better guesses did not give a better model. No difference is significant. I thin
 - `python tests/test_predict.py` checks that rows out = rows in, that the same person twice gets the same answer, that a missing column gives the clear message, and that the versions file is saved. All 4 tests pass.
 
 
+# Week 11 – Outliers and the anomaly score
+
+**New step: `AnomalyScore`**
+
+A new optional step in the Pipeline, right after the preprocessor and before feature selection (`anomaly` in `config.yaml`, `method: none | isolation_forest | lof`). A detector is fitted on the training rows of each fold and adds one column, `anomaly_score`: how unusual each person is. Nobody is removed, so every person still gets a prediction, and `predict.py` needs no change (the fitted detector is saved inside the model).
+
+**My guess (written before running anything)**
+
+I think the anomaly score will help the model. Whether the people who reoffend are the outliers, I'm not sure: I think it depends.
+
+**Are the people who reoffend the outliers?** (`python check_anomalies.py`)
+
+On the 5,771 development people (45.1% reoffend), each detector scored everyone, and I compared the most unusual 5% with the rest:
+
+| Detector         | Top 5% reoffend | Everyone else | Rank correlation (score vs reoffending) | Typical top-5% person |
+|------------------|-----------------|---------------|------------------------------------------|-----------------------|
+| Isolation Forest | 65.4%           | 44.0%         | +0.01                                    | age 25, 6 priors      |
+| LOF              | 55.7%           | 44.5%         | +0.08                                    | age 23.5, 1 prior     |
+
+So yes, partly: the most unusual 5% reoffend more often, especially with Isolation Forest. But across everyone the score says almost nothing (correlation close to 0). The Isolation Forest outliers are mostly **young people with many priors**, and those are exactly the two things that already predict reoffending (age and priors). The model can already see them.
+
+**Does the score help the model?** (tuning off, same folds, compared with `none` of the same model with the corrected paired t-test)
+
+| Model               | none          | isolation_forest | vs none (p)     | lof           | vs none (p)     |
+|---------------------|---------------|------------------|-----------------|---------------|-----------------|
+| logistic_regression | 0.722 ± 0.011 | 0.722 ± 0.012    | +0.000 (0.855)  | 0.721 ± 0.011 | −0.001 (0.392)  |
+| xgboost             | 0.722 ± 0.018 | 0.721 ± 0.014    | −0.001 (0.863)  | 0.718 ± 0.016 | −0.005 (0.226)  |
+
+**Was my guess right?** No, it didn't help. No difference is significant (all p > 0.2), and LOF is even a little worse for XGBoost. The anomaly score is calculated only from columns the model already has, so it doesn't add new information: it is a summary of "young with many priors", which XGBoost can learn by itself from `age` and `priors_count`. The "it depends" part was right: the top outliers do reoffend more, but only because of their age and priors, not because they are unusual. So I kept `method: "none"`.
+
 ## Project structure
 
 ```
@@ -233,6 +263,7 @@ Better guesses did not give a better model. No difference is significant. I thin
 ├── main.py                # entry point: run the whole pipeline (every model in config.yaml), save the best model
 ├── predict.py             # week 10: predict a new CSV with the saved model (no training)
 ├── compare_imputers.py    # week 10 (B2): how well each imputer guesses hidden values
+├── check_anomalies.py     # week 11: do the most unusual people reoffend more?
 ├── tests/
 │   └── test_predict.py    # week 10 (B4): python tests/test_predict.py
 ├── compare_selection.py   # with vs without feature selection, per model (reads results/runs.csv)
@@ -241,7 +272,7 @@ Better guesses did not give a better model. No difference is significant. I thin
 ├── requirements.txt
 ├── src/
 │   ├── data.py             # loading
-│   ├── preprocessing.py    # cleaning + train/test split
+│   ├── preprocessing.py    # cleaning + train/test split + AnomalyScore (week 11)
 │   ├── model.py             # model construction
 │   ├── evaluate.py         # accuracy metrics + fairness check
 │   └── results.py          # saves each run's report to disk
@@ -268,6 +299,7 @@ This table is updated after each practical class, so you can always see what cha
 | 9 | Beyond COMPAS (option B) | `config_multiclass.yaml` predicts `score_text` (3 classes), run with `python main.py config_multiclass.yaml`. Fixed every place that assumed 2 classes (probabilities, metrics, confusion matrix, fairness, target encoder, XGBoost labels, `VoteSelector`). Binary run unchanged. |
 | 10 | Missing values & deployment | Numeric imputer as a setting (`_NUMERIC_IMPUTERS`: median, mean, knn, iterative, random_forest; `imputation` options in `config.yaml`); numeric columns scaled first, then imputed; imputer in the scoreboard and report header. Compared with the corrected paired t-test (no significant difference, so median kept). `main.py` saves the best fitted pipeline to `models/model.joblib`; new `predict.py` predicts a new CSV from the terminal, one row out per row in. |
 | 10 | Extra challenges B2 & B4 | B2: `use_categorical` lets the numeric imputer also see the categorical columns (`NumericImputerWithHelpers`); `compare_imputers.py` measures the guesses on hidden values (`age` error more than halved, model score not significantly different, so left off). B4: `predict.py` stops with a clear message when a column is missing, library versions saved next to the model and checked when loading, `tests/test_predict.py`. |
+| 11 | Outliers & anomaly score | Optional `AnomalyScore` step after the preprocessor (`anomaly.method` in `config.yaml`: none, isolation_forest, lof), fitted on each fold's training rows, adds one `anomaly_score` column; method in the scoreboard and report header, `anomaly_score` in the kept features. `check_anomalies.py`: the top 5% most unusual reoffend more (65% vs 44% for Isolation Forest), but the score didn't improve logistic regression or XGBoost (no significant difference), so left at `none`. |
 
 ## Environment setup
 

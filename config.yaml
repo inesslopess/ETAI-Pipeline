@@ -197,6 +197,19 @@ models:
 
 
 
+# ANOMALY SCORE (W11) ------------------------------------------------------------------
+
+# AnomalyScore: a detector fitted on each fold's training rows adds one
+# column, anomaly_score (how unusual each person is). It sits inside the
+# Pipeline, between "prep" and "select". Nobody is removed.
+
+anomaly:
+  method: "none"                # none | isolation_forest | lof
+  n_neighbors: 20               # lof: larger than the largest group of identical rows (14)
+  random_state: 42              # isolation_forest
+
+
+
 # FEATURE SELECTION --------------------------------------------------------------------
 
 # VoteSelector: keeps features voted for by at least `min_votes` of
